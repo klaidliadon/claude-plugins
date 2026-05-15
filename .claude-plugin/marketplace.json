@@ -1,0 +1,21 @@
+{
+  "name": "klaidliadon",
+  "description": "Personal Claude Code plugins",
+  "owner": {
+    "name": "klaidliadon"
+  },
+  "plugins": [
+    {
+      "name": "git-cleanup",
+      "description": "Audit local branches and worktrees against GitHub PR state, auto-clean safe ones, prompt on the rest.",
+      "source": "./plugins/git-cleanup",
+      "category": "git"
+    },
+    {
+      "name": "ridl-lsp",
+      "description": "RIDL language server for .ridl schema files.",
+      "source": "./plugins/ridl-lsp",
+      "category": "development"
+    }
+  ]
+}
