@@ -9,15 +9,15 @@ Personal Claude Code plugin marketplace.
 
 ## Install
 
-```sh
-# Local (from this directory)
-/plugin marketplace add /Users/aguerrieri/Workspace/klaidliadon/claude-plugins
+In Claude Code:
+
+```
+/plugin marketplace add klaidliadon/claude-plugins
 /plugin install git-cleanup@klaidliadon
 /plugin install ridl-lsp@klaidliadon
-
-# Remote (once pushed)
-/plugin marketplace add klaidliadon/claude-plugins
 ```
+
+Updates: `/plugin marketplace update klaidliadon`.
 
 ## Layout
 
