@@ -1,0 +1,8 @@
+{
+  "name": "codex-review",
+  "version": "1.0.0",
+  "description": "Run a Codex code review against a GitHub PR (async, in a throwaway worktree), specific files, or the local working tree.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}

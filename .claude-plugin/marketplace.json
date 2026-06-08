@@ -22,6 +22,12 @@
       "description": "Two agent sessions (e.g. Claude author + Codex reviewer) autonomously iterate on an artifact through a shared file until they converge or hit an impasse.",
       "source": "./plugins/agent-comms",
       "category": "workflow"
+    },
+    {
+      "name": "codex-review",
+      "description": "Run a Codex code review against a GitHub PR (async, in a throwaway worktree), specific files, or the local working tree.",
+      "source": "./plugins/codex-review",
+      "category": "development"
     }
   ]
 }
