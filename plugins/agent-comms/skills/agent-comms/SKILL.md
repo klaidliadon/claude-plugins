@@ -5,14 +5,13 @@ description: Use when two agent sessions (e.g. Claude as author, Codex as review
 
 # agent-comms — autonomous 2-party review loop
 
-Two roles share one channel file. The scripts ship in this plugin's `bin/`,
-which Claude Code adds to `$PATH` while the plugin is enabled — so call them by
-**bare name** (`comms-send.sh …`).
+Two roles share one channel file, driven by a single `agent-comms` command. It
+ships in this plugin's `bin/`, which Claude Code adds to `$PATH` while the plugin
+is enabled — so call it by bare name: `agent-comms <subcommand>`.
 
-> **Other hosts (e.g. Codex CLI):** run this plugin's `bin/install-codex-link.sh`
-> once. It links the skill into `~/.codex/skills/` and prints the `export PATH=…`
-> line to add the `bin/` to PATH there too. After that, the bare-name calls below
-> work identically.
+> **Other hosts (e.g. Codex CLI):** run `agent-comms install-codex` once. It links
+> the skill into `~/.codex/skills/` and prints the `export PATH=…` line to add the
+> `bin/` to PATH there too. After that, the commands below work identically.
 
 ## Setup
 - Channel `C` and the two participant names are agreed with the human.
@@ -20,10 +19,11 @@ which Claude Code adds to `$PATH` while the plugin is enabled — so call them b
   `AGENT_COMMS_ROOT=<abs path>`.
 
 ## Commands
-- Send: `printf '%s' "<body>" | comms-send.sh --channel C --from <me> [--tag <wire-tag>]`
-- Recv (blocks): `comms-recv.sh --channel C --me <me>`
+- Send: `printf '%s' "<body>" | agent-comms send --channel C --from <me> [--tag <wire-tag>]`
+- Recv (blocks): `agent-comms recv --channel C --me <me>`
   - prints peer message(s), or `__TIMEOUT__` (exit 2) if none within the window.
-- Transcript: `comms-transcript.sh --channel C`
+- Transcript: `agent-comms transcript --channel C`
+- Hash an artifact (for refs): `agent-comms hash <file>` → sha256
 
 ## Wire tags (canonical, hyphenated — never a space)
 - `review-ref=H` (driver), `approve-ref=H` (reviewer),
@@ -36,23 +36,23 @@ status (open/resolved/contested). Only Critical/Important block convergence.
 Progress = a finding added, resolved, or given materially new evidence.
 
 ## Loop — Driver (author)
-1. Edit the artifact. Compute its hash `H` (`shasum`, a manifest, or a git ref).
-2. `comms-send.sh --tag review-ref=H` with the body describing the change.
-3. `comms-recv.sh` and BLOCK.
+1. Edit the artifact. Hash it: `H=$(agent-comms hash <file>)` (or a manifest/git ref).
+2. `agent-comms send --tag review-ref=$H` with the body describing the change.
+3. `agent-comms recv` and BLOCK.
 4. For each finding: fix (→resolved) or rebut WITH NEW EVIDENCE (→contested);
    edit the artifact if it changed.
 5. If a terminal condition holds → send the driver-only terminal tag and STOP
    (terminal sends are exempt from the recv-after-send rule). Else go to 2.
 
 ## Loop — Reviewer
-1. `comms-recv.sh` and BLOCK.
-2. Snapshot the artifact; hash THAT snapshot. Review the snapshot.
-3. Raise/update findings, or `comms-send.sh --tag approve-ref=<snapshot-hash>`.
-4. `comms-recv.sh` and BLOCK. **Two hard rules:**
+1. `agent-comms recv` and BLOCK.
+2. Snapshot the artifact; hash THAT snapshot (`agent-comms hash <file>`). Review it.
+3. Raise/update findings, or `agent-comms send --tag approve-ref=<snapshot-hash>`.
+4. `agent-comms recv` and BLOCK. **Two hard rules:**
    - **Terminal wins:** if a recv batch contains `converged-ref` or
      `stopped-reason`, EXIT immediately regardless of other frames.
-   - **Timeout means wait:** on `__TIMEOUT__`, call `comms-recv.sh` again; do NOT
-     exit. Exit ONLY on a driver terminal message.
+   - **Timeout means wait:** on `__TIMEOUT__`, call `agent-comms recv` again; do
+     NOT exit. Exit ONLY on a driver terminal message.
 
 ## Termination (driver decides, always releases the reviewer)
 - **Converge:** no open/contested Critical/Important AND current artifact hash ==

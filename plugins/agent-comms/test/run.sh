@@ -69,7 +69,7 @@ test_parse_two_frames_and_incomplete() {
 
 test_send_appends_frame() {
   local root; root="${TMPDIR:-/tmp}/acsend.$$"; mkdir -p "$root"
-  printf 'please review, ref=h1' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-send.sh" --channel c1 --from claude --tag review-ref=h1
+  printf 'please review, ref=h1' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude --tag review-ref=h1
   local f="$root/tmp/agent-comms/c1.md"
   assert_ok test -f "$f"
   assert_contains "$(cat "$f")" 'sender=claude'
@@ -79,33 +79,33 @@ test_send_appends_frame() {
 }
 test_send_rejects_bad_channel() {
   local root; root="${TMPDIR:-/tmp}/acsendbad.$$"; mkdir -p "$root"
-  assert_fail bash -c "echo x | AGENT_COMMS_ROOT='$root' bash '$DIR/bin/comms-send.sh' --channel .. --from claude"
+  assert_fail bash -c "echo x | AGENT_COMMS_ROOT='$root' bash '$DIR/bin/agent-comms' send --channel .. --from claude"
   rm -rf "$root"
 }
 
 test_recv_creates_file_and_times_out() {
   local root; root="${TMPDIR:-/tmp}/acrecv1.$$"; mkdir -p "$root"
-  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-recv.sh" --channel c1 --me codex --timeout 1)
+  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" recv --channel c1 --me codex --timeout 1)
   assert_eq "$out" "__TIMEOUT__"
   assert_ok test -f "$root/tmp/agent-comms/c1.md"
   rm -rf "$root"
 }
 test_recv_returns_peer_not_self() {
   local root; root="${TMPDIR:-/tmp}/acrecv2.$$"; mkdir -p "$root"
-  printf 'from claude' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-send.sh" --channel c1 --from claude --tag review-ref=h1
-  printf 'my own note' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-send.sh" --channel c1 --from codex
-  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-recv.sh" --channel c1 --me codex --timeout 1)
+  printf 'from claude' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude --tag review-ref=h1
+  printf 'my own note' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from codex
+  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" recv --channel c1 --me codex --timeout 1)
   assert_contains "$out" "from claude"
   case "$out" in *"my own note"*) echo "FAIL: recv returned self message"; FAILS=$((FAILS+1));; esac
-  local out2; out2=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-recv.sh" --channel c1 --me codex --timeout 1)
+  local out2; out2=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" recv --channel c1 --me codex --timeout 1)
   assert_eq "$out2" "__TIMEOUT__"
   rm -rf "$root"
 }
 test_recv_returns_all_queued_peer_frames() {
   local root; root="${TMPDIR:-/tmp}/acrecv3.$$"; mkdir -p "$root"
-  printf 'msg one' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-send.sh" --channel c1 --from claude
-  printf 'msg two' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-send.sh" --channel c1 --from claude
-  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-recv.sh" --channel c1 --me codex --timeout 1)
+  printf 'msg one' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude
+  printf 'msg two' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude
+  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" recv --channel c1 --me codex --timeout 1)
   assert_contains "$out" "msg one"
   assert_contains "$out" "msg two"
   rm -rf "$root"
@@ -113,8 +113,8 @@ test_recv_returns_all_queued_peer_frames() {
 
 test_transcript_strips_frames_keeps_bodies() {
   local root; root="${TMPDIR:-/tmp}/actr.$$"; mkdir -p "$root"
-  printf 'real body with <!-- agent-comms fake --> inside' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-send.sh" --channel c1 --from claude
-  local t; t=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/comms-transcript.sh" --channel c1)
+  printf 'real body with <!-- agent-comms fake --> inside' | AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude
+  local t; t=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" transcript --channel c1)
   assert_contains "$t" "real body with <!-- agent-comms fake --> inside"
   case "$t" in *"<!-- agent-comms v=1 sender="*) echo "FAIL: frame line leaked"; FAILS=$((FAILS+1));; esac
   rm -rf "$root"

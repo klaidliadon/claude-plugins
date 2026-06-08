@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# agent-comms — single entrypoint for the 2-party agent review-loop transport.
+# Subcommands: send | recv | transcript | path | hash | install-codex
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/lib.sh"
+
+usage() {
+  cat >&2 <<'EOF'
+agent-comms — 2-party agent review-loop transport
+usage:
+  agent-comms send       --channel C --from F [--tag TAG]   (body on stdin)
+  agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
+  agent-comms transcript --channel C                         (clean chat view)
+  agent-comms path       --channel C                         (resolved channel file path)
+  agent-comms hash       <file>                              (sha256 of file, for review/approve refs)
+  agent-comms install-codex                                  (link skill into ~/.codex/skills)
+EOF
+}
+
+cmd_send() {
+  local CHANNEL="" FROM="" TAG=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --from)    FROM="$2";    shift 2;;
+      --tag)     TAG="$2";     shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$FROM";    then echo "bad --from"    >&2; exit 64; fi
+  if [ -n "$TAG" ] && ! valid_tag "$TAG"; then echo "bad --tag" >&2; exit 64; fi
+  local dir file ts
+  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
+  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  make_frame "$FROM" "$TAG" "$ts" | flock_append "$file"
+}
+
+cmd_recv() {
+  local CHANNEL="" ME="" TIMEOUT=590
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --me)      ME="$2";      shift 2;;
+      --timeout) TIMEOUT="$2"; shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$ME";      then echo "bad --me"      >&2; exit 64; fi
+  local dir file cur off
+  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
+  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
+  if [ ! -e "$file" ]; then : > "$file"; fi
+  cur="$(cursor_file "$CHANNEL" "$ME")"; assert_confined "$cur"
+  off=0
+  if [ -f "$cur" ]; then off="$(cat "$cur")"; fi
+  case "$off" in ''|*[!0-9]*) off=0;; esac
+  bd=""   # script-global so the EXIT trap (which fires outside this function) can see it
+  trap 'rm -rf "${bd:-}"' EXIT INT TERM
+  local deadline; deadline=$(( $(date +%s) + TIMEOUT ))
+  while :; do
+    bd="${TMPDIR:-/tmp}/acrb.$$.$RANDOM"; mkdir -p "$bd"
+    local idx; idx="$(read_from "$file" "$off" | BODY_DIR="$bd" parse_frames "$off")"
+    if [ -n "$idx" ]; then
+      local peer_out="" last_peer_end="" last_any_end="" i=0 start end sender tag
+      while IFS=$'\t' read -r start end sender tag; do
+        i=$((i+1)); last_any_end="$end"
+        if [ "$sender" != "$ME" ]; then
+          peer_out="${peer_out}$(cat "$bd/$i")"$'\n'
+          last_peer_end="$end"
+        fi
+      done <<< "$idx"
+      rm -rf "$bd"
+      if [ -n "$last_peer_end" ]; then
+        echo "$last_peer_end" > "$cur"
+        printf '%s' "$peer_out"
+        exit 0
+      fi
+      if [ -n "$last_any_end" ]; then
+        echo "$last_any_end" > "$cur"
+        off="$last_any_end"
+      fi
+    else
+      rm -rf "$bd"
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "__TIMEOUT__"
+      exit 2
+    fi
+    sleep 0.3
+  done
+}
+
+cmd_transcript() {
+  local CHANNEL=""
+  while [ $# -gt 0 ]; do case "$1" in --channel) CHANNEL="$2"; shift 2;; *) shift;; esac; done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  local file idx i
+  file="$(channel_file "$CHANNEL")"; [ -e "$file" ] || exit 0
+  bd="${TMPDIR:-/tmp}/actrans.$$.$RANDOM"; mkdir -p "$bd"   # script-global for the EXIT trap below
+  trap 'rm -rf "${bd:-}"' EXIT
+  idx="$(read_from "$file" 0 | BODY_DIR="$bd" parse_frames 0)"
+  i=0
+  while IFS=$'\t' read -r _ _ _ _; do
+    i=$((i+1))
+    if [ -f "$bd/$i" ]; then cat "$bd/$i"; echo; fi
+  done <<< "$idx"
+}
+
+cmd_path() {
+  local CHANNEL=""
+  while [ $# -gt 0 ]; do case "$1" in --channel) CHANNEL="$2"; shift 2;; *) shift;; esac; done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  channel_file "$CHANNEL"
+}
+
+cmd_hash() {
+  local f="${1:-}"
+  if [ -z "$f" ] || [ ! -f "$f" ]; then echo "usage: agent-comms hash <file>" >&2; exit 64; fi
+  shasum -a 256 "$f" | awk '{print $1}'
+}
+
+cmd_install_codex() {
+  local PLUGIN_ROOT SRC DST cur
+  PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
+  SRC="$PLUGIN_ROOT/skills/agent-comms"
+  DST="$HOME/.codex/skills/agent-comms"
+  mkdir -p "$HOME/.codex/skills"
+  if [ -L "$DST" ]; then
+    cur="$(readlink "$DST")"
+    if [ "$cur" = "$SRC" ]; then echo "already linked"; else echo "refusing: $DST -> $cur (not $SRC)" >&2; exit 1; fi
+  elif [ -e "$DST" ]; then
+    echo "refusing: $DST exists and is not our symlink" >&2; exit 1
+  else
+    ln -s "$SRC" "$DST"; echo "linked $DST -> $SRC"
+  fi
+  echo "For Codex, add this plugin's bin to PATH (e.g. in ~/.zshrc):"
+  echo "  export PATH=\"$PLUGIN_ROOT/bin:\$PATH\""
+}
+
+cmd="${1:-}"; if [ $# -gt 0 ]; then shift; fi
+case "$cmd" in
+  send)          cmd_send "$@";;
+  recv)          cmd_recv "$@";;
+  transcript)    cmd_transcript "$@";;
+  path)          cmd_path "$@";;
+  hash)          cmd_hash "$@";;
+  install-codex) cmd_install_codex "$@";;
+  -h|--help|help) usage; exit 0;;
+  "") usage; exit 64;;
+  *) echo "unknown subcommand: $cmd" >&2; usage; exit 64;;
+esac
