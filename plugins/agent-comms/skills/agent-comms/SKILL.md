@@ -15,8 +15,14 @@ is enabled — so call it by bare name: `agent-comms <subcommand>`.
 
 ## Setup
 - Channel `C` and the two participant names are agreed with the human.
-- Both sessions must resolve the same root: same repo, or both export
-  `AGENT_COMMS_ROOT=<abs path>`.
+- Both sessions must resolve the same comms dir. Resolution precedence:
+  `--dir DIR` > `--root DIR` > `$AGENT_COMMS_ROOT` > git repo root > `$PWD`.
+  Prefer the **flags** so each command line starts with `agent-comms` (no env
+  prefix → a single permission allowlist rule covers every call):
+  - `--root <abs repo root>` → channel at `<root>/tmp/agent-comms/` (the default).
+  - `--dir <abs dir>` → channel at `<dir>/` exactly (cross-repo / shared dir).
+  Pass the same flag in BOTH sessions and on EVERY call. Verify with
+  `agent-comms path --channel C [--root … | --dir …]` — never `/tmp`.
 
 ## Commands
 - Send: `printf '%s' "<body>" | agent-comms send --channel C --from <me> [--tag <wire-tag>]`

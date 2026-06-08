@@ -43,10 +43,23 @@ valid_tag() {
 }
 
 # --- root resolution ---
+# canon_dir DIR — print canonical absolute path of a possibly-nonexistent dir
+# (its parent MUST exist). Lets --dir be compared byte-for-byte in assert_confined.
+canon_dir() {
+  local p="$1"
+  if [ -d "$p" ]; then ( cd "$p" && pwd ); return; fi
+  local par; par="$( cd "$(dirname "$p")" 2>/dev/null && pwd )" \
+    || { echo "no such parent dir for: $p" >&2; return 1; }
+  printf '%s/%s\n' "$par" "$(basename "$p")"
+}
+
 # comms_root — print <root> (NOT including tmp/agent-comms).
+# Precedence: --root flag (COMMS_ROOT_FLAG) > AGENT_COMMS_ROOT > git root > $PWD.
 comms_root() {
   local root gcd
-  if [ -n "${AGENT_COMMS_ROOT:-}" ]; then
+  if [ -n "${COMMS_ROOT_FLAG:-}" ]; then
+    root="$COMMS_ROOT_FLAG"
+  elif [ -n "${AGENT_COMMS_ROOT:-}" ]; then
     root="$AGENT_COMMS_ROOT"
   elif gcd=$(git rev-parse --git-common-dir 2>/dev/null); then
     root="$(cd "$(dirname "$gcd")" && pwd)"
@@ -56,8 +69,12 @@ comms_root() {
   realpath "$root"
 }
 
-# comms_dir — print <root>/tmp/agent-comms
-comms_dir() { echo "$(comms_root)/tmp/agent-comms"; }
+# comms_dir — the comms dir. --dir flag (COMMS_DIR_FLAG) overrides outright;
+# otherwise <root>/tmp/agent-comms.
+comms_dir() {
+  if [ -n "${COMMS_DIR_FLAG:-}" ]; then printf '%s\n' "$COMMS_DIR_FLAG"; return; fi
+  echo "$(comms_root)/tmp/agent-comms"
+}
 
 # channel_file CHANNEL ; cursor_file CHANNEL AGENT
 channel_file() { echo "$(comms_dir)/$1.md"; }
