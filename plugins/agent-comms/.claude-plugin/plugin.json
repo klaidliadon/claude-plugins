@@ -1,6 +1,6 @@
 {
   "name": "agent-comms",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Two agent sessions (e.g. Claude as author, Codex as reviewer) autonomously iterate on an artifact through a single shared file until they converge or hit an impasse — no human relaying between chats.",
   "author": {
     "name": "klaidliadon"

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# codex-review — spawn a non-interactive Codex reviewer with the prompt fed on
+# stdin. `codex exec` reads stdin even when given a positional prompt, so a
+# backgrounded `codex exec "$(cat f)"` hangs forever on "Reading additional
+# input from stdin..." instead of running. Feeding the prompt via stdin — and
+# disabling Codex's sandbox so it can read the repo and run agent-comms
+# (nested-sandbox gotcha: the outer host also sandboxes the child) — is the only
+# reliable launch.
+#
+# Usage: codex-review --prompt-file <path> [extra codex exec args...]
+set -euo pipefail
+
+prompt_file=""
+rest=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prompt-file=*) prompt_file="${1#*=}" ;;
+    --prompt-file|-f) shift; prompt_file="${1:-}" ;;
+    *) rest+=("$1") ;;
+  esac
+  shift
+done
+
+if [ -z "$prompt_file" ]; then
+  echo "usage: codex-review --prompt-file <path> [extra codex exec args...]" >&2
+  exit 2
+fi
+if [ ! -f "$prompt_file" ]; then
+  echo "codex-review: prompt file not found: $prompt_file" >&2
+  exit 2
+fi
+
+if [ "${#rest[@]}" -gt 0 ]; then
+  exec codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check "${rest[@]}" < "$prompt_file"
+fi
+exec codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check < "$prompt_file"

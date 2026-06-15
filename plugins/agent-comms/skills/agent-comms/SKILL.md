@@ -13,6 +13,25 @@ is enabled — so call it by bare name: `agent-comms <subcommand>`.
 > the skill into `~/.codex/skills/` and prints the `export PATH=…` line to add the
 > `bin/` to PATH there too. After that, the commands below work identically.
 
+## Spawning the Codex reviewer (author session)
+
+To launch Codex non-interactively as the reviewer, **always use the `codex-review`
+wrapper** (ships in this plugin's `bin/`):
+
+```
+codex-review --prompt-file <reviewer-prompt.txt>
+```
+
+It feeds the prompt on **stdin** and disables Codex's sandbox.
+
+> **⚠️ VERY IMPORTANT — never call `codex exec` directly for this.** `codex exec`
+> reads stdin even when handed a positional prompt, so a backgrounded
+> `codex exec "$(cat prompt.txt)"` hangs forever on `Reading additional input
+> from stdin...` instead of reviewing. And the child must run with its sandbox
+> off, or it can't read the repo / run `agent-comms` (nested-sandbox gotcha —
+> the outer host also sandboxes the child). `codex-review` handles both; raw
+> `codex exec` invites silent stalls.
+
 ## Setup
 - Channel `C` and the two participant names are agreed with the human.
 - Both sessions must resolve the same comms dir. Resolution precedence:
