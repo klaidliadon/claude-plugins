@@ -83,6 +83,47 @@ test_send_rejects_bad_channel() {
   rm -rf "$root"
 }
 
+test_send_body_file() {
+  local root; root="${TMPDIR:-/tmp}/acbodyfile.$$"; mkdir -p "$root"
+  local bf="$root/body.txt"; printf 'body from a file' > "$bf"
+  AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude --tag review-ref=h1 --body-file "$bf"
+  local f="$root/tmp/agent-comms/c1.md"
+  assert_contains "$(cat "$f")" 'body from a file'
+  assert_contains "$(cat "$f")" 'tag=review-ref=h1'
+  rm -rf "$root"
+}
+
+test_send_ref_flag_hashes_artifact() {
+  local root; root="${TMPDIR:-/tmp}/acref.$$"; mkdir -p "$root"
+  local art="$root/artifact.md"; printf 'plan content v1' > "$art"
+  local bf="$root/msg.txt"; printf 'please review' > "$bf"
+  local want; want="review-ref=$(file_sha256 "$art")"
+  local err; err=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" send --channel c1 --from claude --review-ref "$art" --body-file "$bf" 2>&1)
+  local f="$root/tmp/agent-comms/c1.md"
+  assert_contains "$(cat "$f")" "tag=$want"    # in-process hash landed as the wire tag
+  assert_contains "$err" "$want"               # and was echoed to stderr for audit
+  rm -rf "$root"
+}
+
+test_send_ref_and_tag_mutually_exclusive() {
+  local root; root="${TMPDIR:-/tmp}/acrefx.$$"; mkdir -p "$root"
+  local art="$root/a.md"; printf 'x' > "$art"
+  assert_fail bash -c "echo body | AGENT_COMMS_ROOT='$root' bash '$DIR/bin/agent-comms' send --channel c1 --from claude --tag review-ref=h1 --review-ref '$art'"
+  rm -rf "$root"
+}
+
+test_send_ref_missing_file_fails() {
+  local root; root="${TMPDIR:-/tmp}/acrefm.$$"; mkdir -p "$root"
+  assert_fail bash -c "echo body | AGENT_COMMS_ROOT='$root' bash '$DIR/bin/agent-comms' send --channel c1 --from claude --review-ref '$root/nope.md'"
+  rm -rf "$root"
+}
+
+test_send_body_file_missing_fails() {
+  local root; root="${TMPDIR:-/tmp}/acbfm.$$"; mkdir -p "$root"
+  assert_fail bash -c "AGENT_COMMS_ROOT='$root' bash '$DIR/bin/agent-comms' send --channel c1 --from claude --body-file '$root/nope.txt'"
+  rm -rf "$root"
+}
+
 test_recv_creates_file_and_times_out() {
   local root; root="${TMPDIR:-/tmp}/acrecv1.$$"; mkdir -p "$root"
   local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" recv --channel c1 --me codex --timeout 1)

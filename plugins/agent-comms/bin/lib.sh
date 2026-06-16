@@ -42,6 +42,11 @@ valid_tag() {
   [[ "$1" =~ ^[A-Za-z0-9._=-]+$ ]]
 }
 
+# file_sha256 FILE — print the sha256 hex digest of FILE (no filename).
+file_sha256() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
 # --- root resolution ---
 # canon_dir DIR — print canonical absolute path of a possibly-nonexistent dir
 # (its parent MUST exist). Lets --dir be compared byte-for-byte in assert_confined.
