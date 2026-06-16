@@ -9,7 +9,8 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
-  agent-comms send       --channel C --from F [--tag TAG]   (body on stdin)
+  agent-comms send       --channel C --from F [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
+                                                             (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
   agent-comms transcript --channel C                         (clean chat view)
   agent-comms path       --channel C                         (resolved channel file path)
@@ -23,23 +24,42 @@ EOF
 }
 
 cmd_send() {
-  local CHANNEL="" FROM="" TAG=""
+  local CHANNEL="" FROM="" TAG="" BODYFILE="" REFKIND="" REFFILE=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --channel) CHANNEL="$2"; shift 2;;
-      --from)    FROM="$2";    shift 2;;
-      --tag)     TAG="$2";     shift 2;;
+      --channel)        CHANNEL="$2";  shift 2;;
+      --from)           FROM="$2";     shift 2;;
+      --tag)            TAG="$2";      shift 2;;
+      --body-file)      BODYFILE="$2"; shift 2;;
+      --review-ref)     REFKIND="review-ref";     REFFILE="$2"; shift 2;;
+      --approve-ref)    REFKIND="approve-ref";    REFFILE="$2"; shift 2;;
+      --converged-ref)  REFKIND="converged-ref";  REFFILE="$2"; shift 2;;
       *) echo "unknown arg: $1" >&2; exit 64;;
     esac
   done
   if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
   if ! valid_name "$FROM";    then echo "bad --from"    >&2; exit 64; fi
+  # A --*-ref flag hashes the artifact in-process and becomes the wire tag, so the
+  # caller never threads a literal hash (no $() capture, no stale-hash bug).
+  if [ -n "$REFFILE" ]; then
+    if [ -n "$TAG" ]; then echo "--tag and --${REFKIND%-ref}-ref are mutually exclusive" >&2; exit 64; fi
+    if [ ! -f "$REFFILE" ]; then echo "no such ref file: $REFFILE" >&2; exit 64; fi
+    local h; h="$(file_sha256 "$REFFILE")"
+    TAG="$REFKIND=$h"
+    echo "$TAG" >&2   # audit: surface the computed ref without polluting stdout
+  fi
   if [ -n "$TAG" ] && ! valid_tag "$TAG"; then echo "bad --tag" >&2; exit 64; fi
+  if [ -n "$BODYFILE" ] && [ ! -f "$BODYFILE" ]; then echo "no such --body-file: $BODYFILE" >&2; exit 64; fi
   local dir file ts
   dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
   file="$(channel_file "$CHANNEL")"; assert_confined "$file"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  make_frame "$FROM" "$TAG" "$ts" | flock_append "$file"
+  # Body comes from --body-file when given (no `printf | …` pipe needed), else stdin.
+  if [ -n "$BODYFILE" ]; then
+    make_frame "$FROM" "$TAG" "$ts" < "$BODYFILE" | flock_append "$file"
+  else
+    make_frame "$FROM" "$TAG" "$ts" | flock_append "$file"
+  fi
 }
 
 cmd_recv() {
@@ -124,7 +144,7 @@ cmd_path() {
 cmd_hash() {
   local f="${1:-}"
   if [ -z "$f" ] || [ ! -f "$f" ]; then echo "usage: agent-comms hash <file>" >&2; exit 64; fi
-  shasum -a 256 "$f" | awk '{print $1}'
+  file_sha256 "$f"
 }
 
 cmd_install_codex() {

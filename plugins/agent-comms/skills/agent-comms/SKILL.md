@@ -44,11 +44,28 @@ It feeds the prompt on **stdin** and disables Codex's sandbox.
   `agent-comms path --channel C [--root … | --dir …]` — never `/tmp`.
 
 ## Commands
-- Send: `printf '%s' "<body>" | agent-comms send --channel C --from <me> [--tag <wire-tag>]`
+
+**Invoke atomically.** Every call must START with the literal `agent-comms`, as
+its own command — no `H=$(agent-comms …)` capture, no `printf … | agent-comms`
+pipe, no `;`/`&&` chaining. Those break both the `Bash(agent-comms *)` allow rule
+(prefix match) and any compound-command guard. The flags below exist so you never
+need a pipe or a captured hash.
+
+- Send: `agent-comms send --channel C --from <me> [--tag <wire-tag>] [--body-file <f>] [--review-ref|--approve-ref|--converged-ref <artifact>]`
+  - Body: pass `--body-file <f>` (write the body with your editor first). Stdin
+    still works as a fallback, but the pipe form trips the guards above.
+  - Ref tags: `--review-ref/--approve-ref/--converged-ref <artifact>` hash the
+    artifact IN-PROCESS and set the wire tag — no separate `hash` step, no `$()`,
+    and the tag always matches the bytes on disk. The computed `tag=H` is echoed
+    to stderr for audit. Mutually exclusive with `--tag`; use `--tag` for literal
+    tags like `stopped-reason=impasse`.
 - Recv (blocks): `agent-comms recv --channel C --me <me>`
   - prints peer message(s), or `__TIMEOUT__` (exit 2) if none within the window.
 - Transcript: `agent-comms transcript --channel C`
-- Hash an artifact (for refs): `agent-comms hash <file>` → sha256
+- Hash an artifact (manual check / reviewer snapshot): `agent-comms hash <file>` → sha256
+
+Pin `--root <abs repo root>` (or `--dir`) on EVERY call — see Setup; omitting it
+resolves the channel from cwd's git root and silently splits the channel.
 
 ## Wire tags (canonical, hyphenated — never a space)
 - `review-ref=H` (driver), `approve-ref=H` (reviewer),
@@ -61,8 +78,9 @@ status (open/resolved/contested). Only Critical/Important block convergence.
 Progress = a finding added, resolved, or given materially new evidence.
 
 ## Loop — Driver (author)
-1. Edit the artifact. Hash it: `H=$(agent-comms hash <file>)` (or a manifest/git ref).
-2. `agent-comms send --tag review-ref=$H` with the body describing the change.
+1. Edit the artifact and write the message body to a file.
+2. `agent-comms send … --review-ref <artifact> --body-file <body>` (the bin hashes
+   the artifact and tags `review-ref`; no manual hash, no `$()`).
 3. `agent-comms recv` and BLOCK.
 4. For each finding: fix (→resolved) or rebut WITH NEW EVIDENCE (→contested);
    edit the artifact if it changed.
@@ -71,8 +89,9 @@ Progress = a finding added, resolved, or given materially new evidence.
 
 ## Loop — Reviewer
 1. `agent-comms recv` and BLOCK.
-2. Snapshot the artifact; hash THAT snapshot (`agent-comms hash <file>`). Review it.
-3. Raise/update findings, or `agent-comms send --tag approve-ref=<snapshot-hash>`.
+2. Snapshot the artifact and review it.
+3. Raise/update findings, or `agent-comms send … --approve-ref <artifact>` (hashes
+   the snapshot you reviewed and tags `approve-ref`).
 4. `agent-comms recv` and BLOCK. **Two hard rules:**
    - **Terminal wins:** if a recv batch contains `converged-ref` or
      `stopped-reason`, EXIT immediately regardless of other frames.
@@ -90,6 +109,9 @@ Progress = a finding added, resolved, or given materially new evidence.
   (sent durably so a late reviewer still exits), then surface to human.
 
 ## Hash discipline
-Reviewer approves the hash of the bytes it SNAPSHOTTED. Driver recomputes the
-CURRENT hash before sending `converged-ref`; if it differs (driver edited after
-approval), keep looping.
+`--review-ref/--approve-ref/--converged-ref` hash the artifact at send time, so a
+ref tag always matches the bytes on disk at that moment. Reviewer approves the
+snapshot it reviewed (send `--approve-ref` right after reviewing, before any edit).
+Driver sends `--converged-ref <artifact>` only when no open/contested
+Critical/Important remain AND the artifact is unchanged since the reviewer's
+approve; if the driver edited after approval, the new hash won't match — keep looping.
