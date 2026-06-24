@@ -25,6 +25,6 @@ both until each location is refreshed.
    /plugin update agent-comms               # refreshes Claude's cache
    ```
 
-Stable, non-versioned link paths (`~/.local/bin/{agent-comms,lib.sh}`,
+Stable, non-versioned link paths (`~/.local/bin/{agent-comms,claude-review,codex-review,lib.sh}`,
 `~/.codex/skills/agent-comms`) mean a version bump never breaks the symlinks —
 only the content behind them changes.

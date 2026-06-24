@@ -32,6 +32,25 @@ It feeds the prompt on **stdin** and disables Codex's sandbox.
 > the outer host also sandboxes the child). `codex-review` handles both; raw
 > `codex exec` invites silent stalls.
 
+## Spawning the Claude reviewer (Codex author session)
+
+To launch Claude non-interactively as the reviewer, **always use the
+`claude-review` wrapper** (ships in this plugin's `bin/`):
+
+```
+claude-review --prompt-file <reviewer-prompt.txt>
+```
+
+It feeds the prompt on **stdin**, runs `claude -p`, grants the current working
+directory with `--add-dir`, and uses `--permission-mode bypassPermissions` so a
+background reviewer cannot stall waiting for permission prompts. Pass normal
+`claude -p` args after the prompt file, e.g. `--model sonnet
+--max-budget-usd 1`.
+
+> **⚠️ VERY IMPORTANT — never call raw `claude` for a background reviewer.**
+> Interactive mode waits on a TTY, and even `claude -p` can block on tool
+> permission prompts unless launched with the wrapper's flags.
+
 ## Setup
 - Channel `C` and the two participant names are agreed with the human.
 - Both sessions must resolve the same comms dir. Resolution precedence:
@@ -76,6 +95,12 @@ resolves the channel from cwd's git root and silently splits the channel.
 Each review point: ID (`F1`…), severity (Critical/Important/Suggestion),
 status (open/resolved/contested). Only Critical/Important block convergence.
 Progress = a finding added, resolved, or given materially new evidence.
+
+## Opening title
+Every new review loop's first driver message body and spawned reviewer prompt
+MUST begin with a one-line human-readable task title, for example
+`review analytics plan (PR 1565)`. Use the concrete artifact type and id
+(PR/issue/doc name) so VS Code conversation/session lists are scannable.
 
 ## Loop — Driver (author)
 1. Edit the artifact and write the message body to a file.

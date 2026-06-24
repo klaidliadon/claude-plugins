@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# claude-review — spawn a non-interactive Claude reviewer with the prompt fed on
+# stdin. Keep this as the Codex-side mirror of codex-review: prompt-file only,
+# print mode, and permission prompts disabled so a background reviewer cannot
+# stall waiting for TTY interaction.
+#
+# Usage: claude-review --prompt-file <path> [extra claude -p args...]
+set -euo pipefail
+
+prompt_file=""
+rest=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prompt-file=*) prompt_file="${1#*=}" ;;
+    --prompt-file|-f) shift; prompt_file="${1:-}" ;;
+    *) rest+=("$1") ;;
+  esac
+  shift
+done
+
+if [ -z "$prompt_file" ]; then
+  echo "usage: claude-review --prompt-file <path> [extra claude -p args...]" >&2
+  exit 2
+fi
+if [ ! -f "$prompt_file" ]; then
+  echo "claude-review: prompt file not found: $prompt_file" >&2
+  exit 2
+fi
+
+if [ "${#rest[@]}" -gt 0 ]; then
+  exec claude -p --permission-mode bypassPermissions --add-dir "$PWD" "${rest[@]}" < "$prompt_file"
+fi
+exec claude -p --permission-mode bypassPermissions --add-dir "$PWD" < "$prompt_file"
