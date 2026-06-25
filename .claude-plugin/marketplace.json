@@ -28,6 +28,12 @@
       "description": "Run a Codex code review against a GitHub PR (async, in a throwaway worktree), specific files, or the local working tree.",
       "source": "./plugins/codex-review",
       "category": "development"
+    },
+    {
+      "name": "pr-workflow",
+      "description": "Authoring a PR through the gated review pipeline: PR-description format, chained/dependent-PR merge-order rules, and code-review output convention.",
+      "source": "./plugins/pr-workflow",
+      "category": "git"
     }
   ]
 }
