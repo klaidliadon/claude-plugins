@@ -55,8 +55,13 @@ Do not:
 - Open with `## Summary` and rehash the diff — the reviewer is about to read it.
 - Add `🤖 Generated with Claude Code` footers — pure noise.
 - Write test plans as wishlists (`- [ ] Verify edge cases`). Either you ran it (paste the command + result) or you didn't (say so).
+- Hard-wrap paragraph prose at ~80 cols. GFM in PR/issue/comment bodies renders a single newline as a hard line break, so wrapped lines display broken mid-sentence. One line per paragraph; blank lines separate paragraphs. (List items and table rows stay one per line; an intentional multi-line stack is fine — the break is the point there.)
 
 Bodies always via `--body-file` / `-F body=@…`, never heredoc — heredoc mangles backticks, fences, `!`, `"`. Don't escape backticks.
+
+## Spec / plan branches — push, don't PR
+
+When the deliverable is a doc, spec, or plan landing on a `docs/...` or `spec/...` branch (or a `tmp/<topic>/` scratch doc being "saved"/"pushed"), push the branch and surface the branch + file URL in chat — then stop. Don't `gh pr create` unprompted: a PR forces review machinery (bots, approvals, conflicts) onto a doc that's still iterating. The PR is opt-in; if one is wanted, it'll be asked for.
 
 ## Chained / dependent PRs — the merge order MUST be in the description
 
