@@ -1,0 +1,8 @@
+{
+  "name": "go-style",
+  "version": "1.0.0",
+  "description": "Go style conventions: new(value) for *T fields, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}
