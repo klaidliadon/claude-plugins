@@ -81,6 +81,7 @@ What to look for:
 ## Author-side: handling review comments
 
 - Address every automated/bot comment — fix it or explain why it doesn't apply. Reply `Addressed in <commit-hash>` (or your reasoning). Never silently click "Resolve."
+- **Verify before replying, cite inline.** A reply that asserts a technical fact (spec behavior, vendor API rules, browser/cookie semantics) gets checked against an authoritative source first — vendor docs, MDN, RFC — and links it in the reply. If the primary source can't be machine-read (JS-rendered docs), say "corroborated, not primary-verified" rather than asserting. Keep the reply short: verdict, commit ref, source link.
 - Resolve threads with `gh api` (audit trail), never the web UI "Resolve conversation" button.
 - Each push triggers a new review cycle. Repeat until zero open bot comments before requesting human review.
 - Human reviewers focus on architecture, intent, and tradeoffs — bots already caught the rest.
