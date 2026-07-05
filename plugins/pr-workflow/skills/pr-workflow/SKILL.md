@@ -57,7 +57,7 @@ Do not:
 - Write test plans as wishlists (`- [ ] Verify edge cases`). Either you ran it (paste the command + result) or you didn't (say so).
 - Hard-wrap paragraph prose at ~80 cols. GFM in PR/issue/comment bodies renders a single newline as a hard line break, so wrapped lines display broken mid-sentence. One line per paragraph; blank lines separate paragraphs. (List items and table rows stay one per line; an intentional multi-line stack is fine — the break is the point there.)
 
-Bodies always via `--body-file` / `-F body=@…`, never heredoc — heredoc mangles backticks, fences, `!`, `"`. Don't escape backticks.
+Bodies always via `--body-file` / `-F body=@…`, never heredoc — heredoc mangles backticks, fences, `!`, `"`. Don't escape backticks. Assemble the file with the Write tool (append boilerplate via `cp` + `printf >>` if needed) — never `printf … "$(cat draft.md)"`: command substitution always escalates the Bash call to a manual permission prompt, no matter how allowlisted the inner commands are.
 
 ## Spec / plan branches — push, don't PR
 
