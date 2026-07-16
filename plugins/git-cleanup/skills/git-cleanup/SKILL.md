@@ -18,6 +18,41 @@ Audit local branches and worktrees against GitHub PR state. Auto-clean the unamb
 
 Conservative posture only. There is no `--aggressive` flag.
 
+## Helper scripts
+
+Two read-only Node helpers ship in `scripts/` next to this file. Use them instead of
+hand-writing per-run classification — they do the whole truth table in one call with
+no permission prompts, because the plugin lives under `~/.claude/plugins/` and the
+`node <plugins-path>/*` invocation is allowlisted. Both are **read-only** (no deletes,
+no ref writes, no fetch) so the destructive-git guardrail keeps gating actual removals.
+
+Invoke by absolute path to this skill's `scripts/` dir (call it `SKILL_SCRIPTS`), e.g.
+`node "$SKILL_SCRIPTS/audit.mjs" …` where `$SKILL_SCRIPTS` is the directory containing
+this SKILL.md plus `/scripts`.
+
+- **`audit.mjs`** — the whole Classify phase in one pass. Enumerates branches
+  (`git for-each-ref`), worktrees + dirty state (`git worktree list --porcelain` +
+  `git status`), pulls `gh pr list`, applies the truth table below, prints the grouped
+  AUTO/PROMPT/NEVER plan. `--json` for machine output; degrades to tracking-state-only
+  if `gh` is unavailable. Does **not** fetch — run `git fetch --prune` first.
+
+  ```
+  node "$SKILL_SCRIPTS/audit.mjs" [--repo owner/repo] [--cwd DIR] [--json]
+  ```
+
+- **`stack-check.mjs`** — sdf/stack consistency probe. For an ordered stack (bottom-to-top),
+  reports per layer: merge-base with the stack base, whether it sits on the current base
+  tip (restacked), whether it contains the layer below (chain intact), and ahead/behind vs
+  its origin. Surfaces a partial restack at a glance.
+
+  ```
+  node "$SKILL_SCRIPTS/stack-check.mjs" [--base origin/master] [--cwd DIR] layer1 layer2 … (bottom-to-top)
+  ```
+
+Everything these wrap (`git *`, `gh *`, `jq *`, `sdf *`) is independently allowlisted, so
+any step can also be run inline. Never reach for `python3`, standalone `VAR=`, `$(…)`, or a
+heredoc piped into `gh` — all of those escalate to a permission prompt.
+
 ## Always-on behavior
 
 Run unconditionally before classification, in this order:
@@ -76,11 +111,15 @@ Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO s
    - Run `git -C "$PWD" worktree prune`.
 2. **Refresh state.** `git -C "$PWD" fetch --prune`.
 3. **sdf reconcile** (if sdf detection signals fire). `sdf fetch && sdf sync`. On rebase conflict, abort: print the conflict location and the message `git-cleanup: aborting branch cleanup, resolve the sdf conflict and re-run`.
-4. **Enumerate.**
-   - `git -C "$PWD" branch -vv` (parse: branch name, ahead/behind counts, `[gone]` marker, current-branch `*`).
+4. **Enumerate + Classify.** Run `node "$SKILL_SCRIPTS/audit.mjs" --cwd "$PWD" --json` (see
+   [Helper scripts](#helper-scripts)). One call enumerates branches, worktrees + dirty state,
+   pulls `gh pr list`, applies the truth table, and returns `{AUTO[], PROMPT[], NEVER[]}` with the
+   reason and worktree path per branch. Fall back to the inline commands below only if the script
+   is unavailable:
+   - `git -C "$PWD" for-each-ref --format='%(refname:short)\t%(upstream:short)\t%(upstream:track)' refs/heads/`.
    - `git -C "$PWD" worktree list --porcelain` (cross-reference worktree paths).
    - `gh pr list --state all --limit 1000 --json number,state,headRefName,updatedAt,url --repo <owner/repo>` once; cache by `headRefName`.
-5. **Classify.** Walk every local branch through the truth table, top-down. Build `{AUTO[], PROMPT[], NEVER[]}` with the reason that fired. For PROMPT branches, bucket by reason: `closed PR`, `unpushed commits`, `no PR, never pushed`, `no PR, tracks <ref>`.
+5. **Bucket the PROMPT set** by reason for step 8: `closed PR`, `unpushed commits`, `no PR, never pushed`, `no PR, tracks <ref>`.
 6. **Print the plan.** Always, before executing any destructive action:
 
    ```
