@@ -38,14 +38,18 @@ To launch Claude non-interactively as the reviewer, **always use the
 `claude-review` wrapper** (ships in this plugin's `bin/`):
 
 ```
-claude-review --prompt-file <reviewer-prompt.txt>
+claude-review --prompt-file <reviewer-prompt.txt> \
+  --channel C --me <reviewer> --root <repo-root>
 ```
 
 It feeds the prompt on **stdin**, runs `claude -p`, grants the current working
 directory with `--add-dir`, and uses `--permission-mode bypassPermissions` so a
-background reviewer cannot stall waiting for permission prompts. Pass normal
-`claude -p` args after the prompt file, e.g. `--model sonnet
---max-budget-usd 1`.
+background reviewer cannot stall waiting for permission prompts. The wrapper
+injects an ACK-first startup contract with the exact channel commands. Launch it
+before sending the first task, wait for the reviewer's `ready`/`ACK` frame, then
+start the review loop. The prompt file contains persistent reviewer instructions,
+not the first task. Pass normal `claude -p` args after the handshake flags, e.g.
+`--model sonnet --max-budget-usd 1`.
 
 > **⚠️ VERY IMPORTANT — never call raw `claude` for a background reviewer.**
 > Interactive mode waits on a TTY, and even `claude -p` can block on tool
@@ -61,6 +65,9 @@ background reviewer cannot stall waiting for permission prompts. Pass normal
   - `--dir <abs dir>` → channel at `<dir>/` exactly (cross-repo / shared dir).
   Pass the same flag in BOTH sessions and on EVERY call. Verify with
   `agent-comms path --channel C [--root … | --dir …]` — never `/tmp`.
+- When the reviewed repo is read-only to the child agent, put both the channel
+  and reviewer response-body files under a writable `--dir`; `--add-dir` may
+  grant repository reads without granting scratch writes.
 
 ## Commands
 
@@ -80,6 +87,7 @@ need a pipe or a captured hash.
     tags like `stopped-reason=impasse`.
 - Recv (blocks): `agent-comms recv --channel C --me <me>`
   - prints peer message(s), or `__TIMEOUT__` (exit 2) if none within the window.
+- ACK: `agent-comms ack --channel C --from <me>` appends the fixed startup frame.
 - Transcript: `agent-comms transcript --channel C`
 - Hash an artifact (manual check / reviewer snapshot): `agent-comms hash <file>` → sha256
 
@@ -87,6 +95,7 @@ Pin `--root <abs repo root>` (or `--dir`) on EVERY call — see Setup; omitting 
 resolves the channel from cwd's git root and silently splits the channel.
 
 ## Wire tags (canonical, hyphenated — never a space)
+- `ready` (reviewer startup ACK; driver sends no task before receiving it),
 - `review-ref=H` (driver), `approve-ref=H` (reviewer),
 - `converged-ref=H` (driver-only, terminal, success),
 - `stopped-reason=impasse|stall|silence|circuit-breaker` (driver-only, terminal).
@@ -103,21 +112,25 @@ MUST begin with a one-line human-readable task title, for example
 (PR/issue/doc name) so VS Code conversation/session lists are scannable.
 
 ## Loop — Driver (author)
-1. Edit the artifact and write the message body to a file.
-2. `agent-comms send … --review-ref <artifact> --body-file <body>` (the bin hashes
+1. Launch the reviewer, then `agent-comms recv` and require its `ready`/`ACK`
+   frame before sending any task. Silence is a failed startup, not a review.
+2. Edit the artifact and write the message body to a file.
+3. `agent-comms send … --review-ref <artifact> --body-file <body>` (the bin hashes
    the artifact and tags `review-ref`; no manual hash, no `$()`).
-3. `agent-comms recv` and BLOCK.
-4. For each finding: fix (→resolved) or rebut WITH NEW EVIDENCE (→contested);
+4. `agent-comms recv` and BLOCK.
+5. For each finding: fix (→resolved) or rebut WITH NEW EVIDENCE (→contested);
    edit the artifact if it changed.
-5. If a terminal condition holds → send the driver-only terminal tag and STOP
+6. If a terminal condition holds → send the driver-only terminal tag and STOP
    (terminal sends are exempt from the recv-after-send rule). Else go to 2.
 
 ## Loop — Reviewer
-1. `agent-comms recv` and BLOCK.
-2. Snapshot the artifact and review it.
-3. Raise/update findings, or `agent-comms send … --approve-ref <artifact>` (hashes
+1. Before inspecting the repository or doing task work, send
+   `agent-comms ack --channel C --from <me>`.
+2. `agent-comms recv` and BLOCK for the first task.
+3. Snapshot the artifact and review it.
+4. Raise/update findings, or `agent-comms send … --approve-ref <artifact>` (hashes
    the snapshot you reviewed and tags `approve-ref`).
-4. `agent-comms recv` and BLOCK. **Two hard rules:**
+5. `agent-comms recv` and BLOCK. **Two hard rules:**
    - **Terminal wins:** if a recv batch contains `converged-ref` or
      `stopped-reason`, EXIT immediately regardless of other frames.
    - **Timeout means wait:** on `__TIMEOUT__`, call `agent-comms recv` again; do
