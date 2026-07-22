@@ -161,6 +161,59 @@ test_transcript_strips_frames_keeps_bodies() {
   rm -rf "$root"
 }
 
+test_ack_appends_ready_frame() {
+  local root; root="${TMPDIR:-/tmp}/acack.$$"; mkdir -p "$root"
+  AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" ack --channel c1 --from claude
+  local out; out=$(AGENT_COMMS_ROOT="$root" bash "$DIR/bin/agent-comms" recv --channel c1 --me codex --timeout 1)
+  assert_contains "$out" "ready"
+  assert_contains "$out" "ACK"
+  rm -rf "$root"
+}
+
+test_claude_review_injects_ack_first_contract() {
+  local root; root="${TMPDIR:-/tmp}/acclaudeack.$$"; mkdir -p "$root"
+  local fakebin="$root/bin"; mkdir -p "$fakebin"
+  cat > "$fakebin/claude" <<'EOF'
+#!/usr/bin/env bash
+cat > "$FAKE_CLAUDE_STDIN"
+printf '%s\n' "$@" > "$FAKE_CLAUDE_ARGS"
+EOF
+  chmod +x "$fakebin/claude"
+  local prompt="$root/prompt.md"; printf 'reviewer instructions' > "$prompt"
+
+  local stdin_file="$root/stdin" args_file="$root/args"
+  PATH="$fakebin:$PATH" FAKE_CLAUDE_STDIN="$stdin_file" FAKE_CLAUDE_ARGS="$args_file" \
+    bash "$DIR/bin/claude-review" --prompt-file "$prompt" --channel c1 --me claude --root "$root" --model sonnet
+
+  assert_contains "$(cat "$stdin_file")" "reviewer instructions"
+  assert_contains "$(cat "$stdin_file")" "Before inspecting the repository or starting the first task"
+  assert_contains "$(cat "$stdin_file")" "agent-comms ack --channel c1 --from claude --root $root"
+  assert_contains "$(cat "$stdin_file")" "agent-comms recv --channel c1 --me claude --root $root"
+  assert_contains "$(cat "$args_file")" "--model"
+  case "$(cat "$args_file")" in *"--channel"*) echo "FAIL: comms args leaked to claude"; FAILS=$((FAILS+1));; esac
+  rm -rf "$root"
+}
+
+test_claude_review_without_bootstrap_forwards_prompt() {
+  local root; root="${TMPDIR:-/tmp}/acclaudeplain.$$"; mkdir -p "$root"
+  local fakebin="$root/bin"; mkdir -p "$fakebin"
+  cat > "$fakebin/claude" <<'EOF'
+#!/usr/bin/env bash
+cat > "$FAKE_CLAUDE_STDIN"
+printf '%s\n' "$@" > "$FAKE_CLAUDE_ARGS"
+EOF
+  chmod +x "$fakebin/claude"
+  local prompt="$root/prompt.md"; printf 'plain reviewer instructions' > "$prompt"
+  local stdin_file="$root/stdin" args_file="$root/args"
+  PATH="$fakebin:$PATH" FAKE_CLAUDE_STDIN="$stdin_file" FAKE_CLAUDE_ARGS="$args_file" \
+    bash "$DIR/bin/claude-review" --prompt-file "$prompt" --model haiku
+
+  assert_eq "$(cat "$stdin_file")" "plain reviewer instructions"
+  assert_contains "$(cat "$args_file")" "--model"
+  assert_contains "$(cat "$args_file")" "haiku"
+  rm -rf "$root"
+}
+
 # run named test or all
 if [ $# -gt 0 ]; then "$1"; else for t in $(declare -F | awk '/test_/{print $3}'); do "$t"; done; fi
 [ "$FAILS" -eq 0 ] && echo "ALL PASS" || { echo "$FAILS failures"; exit 1; }

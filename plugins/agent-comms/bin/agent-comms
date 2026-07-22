@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-comms — single entrypoint for the 2-party agent review-loop transport.
-# Subcommands: send | recv | transcript | path | hash | install-codex
+# Subcommands: ack | send | recv | transcript | path | hash | install-codex
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
@@ -9,6 +9,7 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
+  agent-comms ack        --channel C --from F                    (append a fixed ready/ACK frame)
   agent-comms send       --channel C --from F [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
@@ -21,6 +22,24 @@ global options (any subcommand; precedence --dir > --root > $AGENT_COMMS_ROOT > 
   --root DIR   repo root; channel lives at DIR/tmp/agent-comms
   --dir  DIR   exact comms dir (overrides --root); DIR's parent must exist
 EOF
+}
+
+cmd_ack() {
+  local CHANNEL="" FROM=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --from)    FROM="$2";    shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$FROM";    then echo "bad --from"    >&2; exit 64; fi
+  local dir file ts
+  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
+  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'ACK' | make_frame "$FROM" "ready" "$ts" | flock_append "$file"
 }
 
 cmd_send() {
@@ -183,6 +202,7 @@ done
 set -- ${rest[@]+"${rest[@]}"}
 
 case "$cmd" in
+  ack)           cmd_ack "$@";;
   send)          cmd_send "$@";;
   recv)          cmd_recv "$@";;
   transcript)    cmd_transcript "$@";;
