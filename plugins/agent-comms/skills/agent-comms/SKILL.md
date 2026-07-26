@@ -10,8 +10,15 @@ ships in this plugin's `bin/`, which Claude Code adds to `$PATH` while the plugi
 is enabled — so call it by bare name: `agent-comms <subcommand>`.
 
 > **Other hosts (e.g. Codex CLI):** run `agent-comms install-codex` once. It links
-> the skill into `~/.codex/skills/` and prints the `export PATH=…` line to add the
-> `bin/` to PATH there too. After that, the commands below work identically.
+> the skill and stable commands to Claude's immutable versioned cache after
+> verifying that cache matches the canonical marketplace release. After that,
+> the commands below work identically.
+
+Before launching either reviewer, run `agent-comms doctor`. Both reviewer
+wrappers enforce this check and refuse startup when the marketplace, Claude
+cache, Codex skill, or command links do not identify the same release. Repair a
+mismatch with `claude plugin update agent-comms@klaidliadon`, then
+`agent-comms install-codex`; do not bypass the check.
 
 ## Spawning the Codex reviewer (author session)
 

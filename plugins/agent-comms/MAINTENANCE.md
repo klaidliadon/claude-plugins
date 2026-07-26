@@ -2,29 +2,43 @@
 
 How the two sessions load this plugin, and how to ship a change to both.
 
-## Dual read model
+## Canonical source and immutable runtime
 
-- **Claude Code** reads the version-pinned plugin **cache**
-  (`~/.claude/plugins/cache/…`).
-- **Codex** reads the **marketplace clone**
-  (`~/.claude/plugins/marketplaces/klaidliadon/…`) — wired in via
-  `agent-comms install-codex`, which links the skill into `~/.codex/skills/`
-  and the `bin/` onto Codex's `PATH`.
+- The marketplace clone (`~/.claude/plugins/marketplaces/klaidliadon/…`) is the
+  canonical source.
+- Claude Code installs that source into its immutable version-pinned cache
+  (`~/.claude/plugins/cache/klaidliadon/agent-comms/<version>`).
+- `agent-comms install-codex` verifies the cache against the marketplace, then
+  links Codex's skill and stable commands to that exact cache directory.
 
-Because the two hosts read from different locations, a change isn't live for
-both until each location is refreshed.
+`agent-comms doctor` compares the manifest version, a deterministic runtime
+digest, and every link target. The reviewer wrappers run it before spawning a
+child and refuse a split installation.
 
 ## Shipping a change
 
-1. Edit under `plugins/agent-comms/` and commit + push.
-2. **Bump `version` in `.claude-plugin/plugin.json` on every change** — the
-   update commands below only detect a change when the version moves.
-3. Refresh both reads:
+1. Edit under `plugins/agent-comms/`.
+2. **Bump `version` in `.claude-plugin/plugin.json` on every change. Never
+   reuse a version after any copy has been installed.**
+3. Validate and test before merging:
    ```
-   /plugin marketplace update klaidliadon   # refreshes the clone → Codex + linked bin
-   /plugin update agent-comms               # refreshes Claude's cache
+   claude plugin validate plugins/agent-comms
+   bash plugins/agent-comms/test/run.sh
+   bash plugins/agent-comms/test/e2e.sh
+   bash plugins/agent-comms/test/flock-hammer.sh
+   ```
+4. Commit, merge, push, then create and push the release tag:
+   ```
+   claude plugin tag plugins/agent-comms --push
+   ```
+5. Refresh and converge both runtimes:
+   ```
+   claude plugin marketplace update klaidliadon
+   claude plugin update agent-comms@klaidliadon
+   agent-comms install-codex
+   agent-comms doctor
    ```
 
 Stable, non-versioned link paths (`~/.local/bin/{agent-comms,claude-review,codex-review,lib.sh}`,
 `~/.codex/skills/agent-comms`) mean a version bump never breaks the symlinks —
-only the content behind them changes.
+`install-codex` preflights every target before moving any link to the new cache.

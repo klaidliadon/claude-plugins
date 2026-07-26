@@ -47,6 +47,148 @@ file_sha256() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
+# --- release identity ---
+plugin_version() {
+  local root="$1" manifest version
+  manifest="$root/.claude-plugin/plugin.json"
+  if [ ! -f "$manifest" ]; then
+    echo "missing plugin manifest: $manifest" >&2
+    return 1
+  fi
+  version="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest")"
+  if [ -z "$version" ]; then
+    echo "missing plugin version: $manifest" >&2
+    return 1
+  fi
+  printf '%s\n' "$version"
+}
+
+runtime_digest() {
+  local root="$1" rel
+  for rel in \
+    .claude-plugin/plugin.json \
+    skills/agent-comms/SKILL.md \
+    bin/agent-comms \
+    bin/lib.sh \
+    bin/claude-review \
+    bin/codex-review
+  do
+    if [ ! -f "$root/$rel" ]; then
+      echo "missing release file: $root/$rel" >&2
+      return 1
+    fi
+  done
+  {
+    for rel in \
+      .claude-plugin/plugin.json \
+      skills/agent-comms/SKILL.md \
+      bin/agent-comms \
+      bin/lib.sh \
+      bin/claude-review \
+      bin/codex-review
+    do
+      printf '%s  %s\n' "$(file_sha256 "$root/$rel")" "$rel"
+    done
+  } | shasum -a 256 | awk '{print $1}'
+}
+
+marketplace_plugin_root() {
+  printf '%s\n' "${AGENT_COMMS_MARKETPLACE_ROOT:-$HOME/.claude/plugins/marketplaces/klaidliadon/plugins/agent-comms}"
+}
+
+claude_cache_base() {
+  printf '%s\n' "${AGENT_COMMS_CACHE_BASE:-$HOME/.claude/plugins/cache/klaidliadon/agent-comms}"
+}
+
+codex_skill_path() {
+  printf '%s\n' "${AGENT_COMMS_CODEX_SKILL:-$HOME/.codex/skills/agent-comms}"
+}
+
+agent_comms_bin_dir() {
+  printf '%s\n' "${AGENT_COMMS_BIN_DIR:-$HOME/.local/bin}"
+}
+
+resolved_path() {
+  local path="$1"
+  if [ ! -e "$path" ]; then
+    return 1
+  fi
+  realpath "$path"
+}
+
+check_installation() {
+  local quiet="${1:-}" marketplace cache marketplace_version cache_version
+  local marketplace_digest cache_digest skill skill_want bin_dir name got want
+  local runtime_root="${AGENT_COMMS_RUNTIME_ROOT:-}" failed=0
+  marketplace="$(marketplace_plugin_root)"
+  if [ ! -d "$marketplace" ]; then
+    echo "agent-comms doctor: missing marketplace: $marketplace" >&2
+    failed=1
+  fi
+  if [ "$failed" -eq 0 ]; then
+    marketplace_version="$(plugin_version "$marketplace")" || failed=1
+  fi
+  if [ "$failed" -eq 0 ]; then
+    cache="$(claude_cache_base)/$marketplace_version"
+    if [ ! -d "$cache" ]; then
+      echo "agent-comms doctor: missing Claude cache: $cache" >&2
+      failed=1
+    fi
+  fi
+  if [ -n "${cache:-}" ] && [ -d "$cache" ]; then
+    cache_version="$(plugin_version "$cache")" || failed=1
+    if [ "${cache_version:-}" != "${marketplace_version:-}" ]; then
+      echo "agent-comms doctor: version mismatch: marketplace=${marketplace_version:-unknown} cache=${cache_version:-unknown}" >&2
+      failed=1
+    fi
+    marketplace_digest="$(runtime_digest "$marketplace")" || failed=1
+    cache_digest="$(runtime_digest "$cache")" || failed=1
+    if [ "${marketplace_digest:-}" != "${cache_digest:-}" ]; then
+      echo "agent-comms doctor: runtime digest mismatch: marketplace=${marketplace_digest:-unknown} cache=${cache_digest:-unknown}" >&2
+      failed=1
+    fi
+    if [ -n "$runtime_root" ]; then
+      got="$(realpath "$runtime_root")"
+      want="$(realpath "$cache")"
+      if [ "$got" != "$want" ]; then
+        echo "agent-comms doctor: runtime target mismatch: $got != $want" >&2
+        failed=1
+      fi
+    fi
+    skill="$(codex_skill_path)"
+    skill_want="$cache/skills/agent-comms"
+    got="$(resolved_path "$skill" 2>/dev/null || true)"
+    want="$(resolved_path "$skill_want" 2>/dev/null || true)"
+    if [ "$got" != "$want" ]; then
+      echo "agent-comms doctor: Codex skill target mismatch: ${got:-missing} != ${want:-missing}" >&2
+      failed=1
+    fi
+    bin_dir="$(agent_comms_bin_dir)"
+    for name in agent-comms claude-review codex-review lib.sh; do
+      got="$(resolved_path "$bin_dir/$name" 2>/dev/null || true)"
+      want="$(resolved_path "$cache/bin/$name" 2>/dev/null || true)"
+      if [ "$got" != "$want" ]; then
+        echo "agent-comms doctor: command target mismatch: $bin_dir/$name -> ${got:-missing}; want ${want:-missing}" >&2
+        failed=1
+      fi
+    done
+  fi
+  if [ "$failed" -ne 0 ]; then
+    echo "repair: claude plugin update agent-comms@klaidliadon" >&2
+    echo "repair: agent-comms install-codex" >&2
+    return 1
+  fi
+  if [ "$quiet" != "--quiet" ]; then
+    echo "version: $marketplace_version"
+    echo "digest: $marketplace_digest"
+    echo "marketplace: $(realpath "$marketplace")"
+    echo "cache: $(realpath "$cache")"
+    echo "Codex skill: $(realpath "$skill")"
+    echo "commands: $(realpath "$cache/bin")"
+    echo "installation: consistent"
+  fi
+}
+
 # --- root resolution ---
 # canon_dir DIR — print canonical absolute path of a possibly-nonexistent dir
 # (its parent MUST exist). Lets --dir be compared byte-for-byte in assert_confined.
