@@ -25,6 +25,36 @@ init_fixture() {
     --release-root "$FIXTURE/release"
 }
 
+start_partial_append() {
+  local sender="$1" kind="$2" state="$3" tag="$4" body_file="$5"
+  local complete="$FIXTURE/complete.md" original_size suffix="$FIXTURE/suffix"
+  cp "$CHANNEL" "$complete"
+  original_size="$(LC_ALL=C wc -c < "$complete" | tr -d ' ')"
+  perl "$PROTOCOL" append --file "$complete" --sender "$sender" --generation 1 \
+    --kind "$kind" --state "$state" --tag "$tag" --body-file "$body_file"
+  tail -c "+$((original_size + 1))" "$complete" > "$suffix"
+  rm -f "$FIXTURE/partial-ready"
+  perl -MFcntl=:flock,SEEK_END -MTime::HiRes=sleep -e '
+    my ($channel, $suffix, $ready) = @ARGV;
+    open(my $out, "+>>", $channel) or die "open channel: $!\n";
+    flock($out, LOCK_EX) or die "lock channel: $!\n";
+    open(my $in, "<", $suffix) or die "open suffix: $!\n";
+    local $/;
+    my $data = <$in>;
+    close($in);
+    my $split = int(length($data) / 2);
+    syswrite($out, substr($data, 0, $split)) == $split or die "partial write: $!\n";
+    open(my $signal, ">", $ready) or die "open ready: $!\n";
+    close($signal);
+    sleep(0.3);
+    my $rest = substr($data, $split);
+    syswrite($out, $rest) == length($rest) or die "final write: $!\n";
+    close($out);
+  ' "$CHANNEL" "$suffix" "$FIXTURE/partial-ready" &
+  PARTIAL_WRITER_PID=$!
+  while [ ! -f "$FIXTURE/partial-ready" ]; do sleep 0.01; done
+}
+
 prepare_public_release() {
   PUBLIC_RELEASE="$FIXTURE/cache/2.0.0"
   mkdir -p "$(dirname "$PUBLIC_RELEASE")"
@@ -126,6 +156,23 @@ test_wait_control_requires_declared_sender() {
   output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
     --me codex --tag hello-ack=claude.1 --timeout 0.1)"
   assert_contains "$output" 'hello-ack'
+  rm -rf "$FIXTURE"
+}
+
+test_readers_wait_for_locked_append() {
+  new_fixture
+  init_fixture
+  printf 'ready' > "$FIXTURE/ready"
+  start_partial_append claude control none hello-ack=claude.1 "$FIXTURE/ready"
+  local inspect_output ready_output
+  inspect_output="$(perl "$PROTOCOL" inspect --file "$CHANNEL" 2>&1)"
+  assert_eq "$?" "0"
+  ready_output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
+    --me codex --tag hello-ack=claude.1 --timeout 1 2>&1)"
+  assert_eq "$?" "0"
+  wait "$PARTIAL_WRITER_PID"
+  assert_contains "$inspect_output" 'seq=2'
+  assert_contains "$ready_output" 'hello-ack'
   rm -rf "$FIXTURE"
 }
 
@@ -458,6 +505,7 @@ else
   test_recv_coalesces_complete_turn
   test_recv_silence_ignores_old_frames
   test_wait_control_requires_declared_sender
+  test_readers_wait_for_locked_append
   test_recv_rejects_floor_owner_immediately
   test_turn_deadline_survives_recv_restarts
   test_public_cli_defaults_to_over

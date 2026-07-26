@@ -300,6 +300,17 @@ sub open_locked {
     return ($fh, defined $data ? $data : "");
 }
 
+sub read_locked {
+    my ($file) = @_;
+    open(my $fh, "<", $file) or fail("open $file: $!");
+    binmode($fh);
+    flock($fh, LOCK_SH) or fail("lock $file: $!");
+    local $/;
+    my $data = <$fh>;
+    close($fh) or fail("close $file: $!");
+    return defined $data ? $data : "";
+}
+
 sub cmd_init {
     my (@argv) = @_;
     my ($file, $session, $driver, $peer, $release, $digest, $protocol, $release_root);
@@ -604,12 +615,8 @@ sub cmd_resume_packet {
     ) or fail("bad resume-packet arguments");
     fail("missing resume-packet argument") unless
         defined $file && valid_name($role) && defined $generation;
-    open(my $fh, "<", $file) or fail("open $file: $!");
-    binmode($fh);
-    local $/;
-    my $data = <$fh>;
-    close($fh);
-    my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
+    my $data = read_locked($file);
+    my ($frames, $incomplete) = parse_frames($data, 1);
     fail("incomplete channel tail") if $incomplete;
     my $session = state_from_frames($frames);
     my ($packet) = reverse grep {
@@ -654,12 +661,8 @@ sub cmd_transcript {
     my $file;
     GetOptionsFromArray(\@argv, "file=s" => \$file) or fail("bad transcript arguments");
     fail("missing --file") unless defined $file;
-    open(my $fh, "<", $file) or fail("open $file: $!");
-    binmode($fh);
-    local $/;
-    my $data = <$fh>;
-    close($fh);
-    my ($frames) = parse_frames(defined $data ? $data : "", 1);
+    my $data = read_locked($file);
+    my ($frames) = parse_frames($data, 1);
     print $_->{block} for @$frames;
 }
 
@@ -672,12 +675,8 @@ sub cmd_inspect {
         "allow-incomplete" => \$allow_incomplete,
     ) or fail("bad inspect arguments");
     fail("missing --file") unless defined $file;
-    open(my $fh, "<", $file) or fail("open $file: $!");
-    binmode($fh);
-    local $/;
-    my $data = <$fh>;
-    close($fh);
-    my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
+    my $data = read_locked($file);
+    my ($frames, $incomplete) = parse_frames($data, 1);
     fail("incomplete channel tail") if $incomplete && !$allow_incomplete;
     my $session = state_from_frames($frames);
     print "session=$session->{session}\n";
@@ -741,12 +740,7 @@ sub cmd_recv {
     my %seen;
     my @semantic;
     while (1) {
-        open(my $fh, "<", $file) or fail("open $file: $!");
-        binmode($fh);
-        local $/;
-        my $data = <$fh>;
-        close($fh);
-        $data = "" unless defined $data;
+        my $data = read_locked($file);
         my ($frames) = parse_frames($data, 1);
         my $session = @$frames ? state_from_frames($frames) : undef;
         if ($session) {
@@ -822,12 +816,8 @@ sub cmd_wait_control {
     my $offset = cursor_offset($cursor);
     my $deadline = time() + $timeout;
     while (1) {
-        open(my $fh, "<", $file) or fail("open $file: $!");
-        binmode($fh);
-        local $/;
-        my $data = <$fh>;
-        close($fh);
-        my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
+        my $data = read_locked($file);
+        my ($frames, $incomplete) = parse_frames($data, 1);
         fail("incomplete channel tail") if $incomplete;
         state_from_frames($frames);
         for my $frame (@$frames) {

@@ -28,6 +28,12 @@ manifests, runs parser/adapter smoke checks, atomically renames `current`, wires
 the CLI and Codex skill through that pointer, removes owned v1 links, and runs
 `doctor`. Failure restores the old pointer and links.
 
+Claude's plugin selection changes before the local activation transaction and
+its CLI exposes no rollback operation. If later validation fails, agent-comms
+restores `current` and its links, then `doctor` reports the selected/current
+mismatch. Fix the release or marketplace state and rerun idempotent `install`;
+do not repoint either side by hand.
+
 ## Update and diagnose
 
 ```text

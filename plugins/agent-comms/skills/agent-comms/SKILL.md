@@ -57,6 +57,11 @@ excluding heartbeats/status. Never poll after `--continue`; keep working.
 Progress is capped at four 512-byte fragments per turn. Send useful conclusions,
 not tool logs or hidden reasoning.
 
+For multi-phase work, `--continue` is mandatory after each completed major
+phase so the raw tail distinguishes progress from a live-but-stuck process.
+Skip progress frames for short single-phase work; never manufacture updates just
+to consume the budget.
+
 Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status
 `open|resolved|contested`. Only unresolved Critical/Important findings block
 approval.
