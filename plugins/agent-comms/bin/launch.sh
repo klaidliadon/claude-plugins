@@ -187,11 +187,16 @@ fi
 
 if [ "$RUNTIME" = "claude" ]; then
   ADAPTER_HELP="$(claude --help 2>&1)" || fail_launch "claude --help failed"
-  case "$ADAPTER_HELP" in *-p*--permission-mode*--add-dir*) ;; *) fail_launch "claude adapter flags are unsupported";; esac
+  case "$ADAPTER_HELP" in *-p*) ;; *) fail_launch "claude adapter is missing -p";; esac
+  case "$ADAPTER_HELP" in *--permission-mode*) ;; *) fail_launch "claude adapter is missing --permission-mode";; esac
+  case "$ADAPTER_HELP" in *--add-dir*) ;; *) fail_launch "claude adapter is missing --add-dir";; esac
 else
   ADAPTER_HELP="$(codex exec --help 2>&1)" || fail_launch "codex exec --help failed"
-  case "$ADAPTER_HELP" in *--dangerously-bypass-approvals-and-sandbox*--skip-git-repo-check*) ;;
-    *) fail_launch "codex adapter flags are unsupported";;
+  case "$ADAPTER_HELP" in *--dangerously-bypass-approvals-and-sandbox*) ;;
+    *) fail_launch "codex adapter is missing --dangerously-bypass-approvals-and-sandbox";;
+  esac
+  case "$ADAPTER_HELP" in *--skip-git-repo-check*) ;;
+    *) fail_launch "codex adapter is missing --skip-git-repo-check";;
   esac
 fi
 

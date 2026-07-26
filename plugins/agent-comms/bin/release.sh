@@ -92,10 +92,15 @@ selected_plugin() {
 adapter_check() {
   local output
   output="$(claude --help 2>&1)" || fail_release "claude --help failed"
-  case "$output" in *-p*--permission-mode*--add-dir*) ;; *) fail_release "Claude adapter flags are unsupported";; esac
+  case "$output" in *-p*) ;; *) fail_release "Claude adapter is missing -p";; esac
+  case "$output" in *--permission-mode*) ;; *) fail_release "Claude adapter is missing --permission-mode";; esac
+  case "$output" in *--add-dir*) ;; *) fail_release "Claude adapter is missing --add-dir";; esac
   output="$(codex exec --help 2>&1)" || fail_release "codex exec --help failed"
-  case "$output" in *--dangerously-bypass-approvals-and-sandbox*--skip-git-repo-check*) ;;
-    *) fail_release "Codex adapter flags are unsupported";;
+  case "$output" in *--dangerously-bypass-approvals-and-sandbox*) ;;
+    *) fail_release "Codex adapter is missing --dangerously-bypass-approvals-and-sandbox";;
+  esac
+  case "$output" in *--skip-git-repo-check*) ;;
+    *) fail_release "Codex adapter is missing --skip-git-repo-check";;
   esac
 }
 

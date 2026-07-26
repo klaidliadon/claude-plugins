@@ -37,7 +37,7 @@ if [ "${1:-}" = "plugin" ] && [ "${2:-}" = "update" ]; then
   exit "${FAKE_UPDATE_STATUS:-0}"
 fi
 if [ "${1:-}" = "--help" ]; then
-  printf '%s\n' '-p --permission-mode --add-dir'
+  printf '%s\n' '--add-dir --permission-mode -p'
   exit 0
 fi
 exit 64

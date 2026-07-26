@@ -42,7 +42,7 @@ if [ "${1:-}" = "plugin" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; 
   exit 0
 fi
 if [ "${1:-}" = "--help" ]; then
-  printf '%s\n' '-p --permission-mode --add-dir'
+  printf '%s\n' '--add-dir --permission-mode -p'
   exit 0
 fi
 printf '%s\n' "$@" > "$FAKE_ARGS"
