@@ -42,11 +42,12 @@ append_lifecycle() {
 
 heartbeat_loop() {
   local child_pid="$1" after="$2" interval="$3"
-  local last_size quiet_since current_size now elapsed
+  local last_size quiet_since last_heartbeat current_size now elapsed
   last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
   quiet_since="$(date +%s)"
+  last_heartbeat="$quiet_since"
   while kill -0 "$child_pid" 2>/dev/null; do
-    sleep "$interval"
+    sleep 1
     kill -0 "$child_pid" 2>/dev/null || break
     current_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
     now="$(date +%s)"
@@ -59,9 +60,12 @@ heartbeat_loop() {
     if [ "$elapsed" -lt "$after" ]; then
       continue
     fi
+    if [ $((now - last_heartbeat)) -lt "$interval" ]; then
+      continue
+    fi
     append_lifecycle alive "elapsed=${elapsed}s"
     last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
-    quiet_since="$now"
+    last_heartbeat="$now"
   done
 }
 
@@ -135,12 +139,16 @@ perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE" > "$METADATA_FILE"
 SESSION_DRIVER="$(metadata_value driver)"
 SESSION_PEER="$(metadata_value peer)"
 SESSION_RELEASE="$(metadata_value release)"
+SESSION_DIGEST="$(metadata_value digest)"
+SESSION_PROTOCOL="$(metadata_value protocol)"
 RELEASE_ROOT="$(metadata_value release_root)"
 SESSION_GENERATION="$(metadata_value "generation.$ME")"
 SESSION_HEARTBEAT_AFTER="$(metadata_value heartbeat_after)"
 SESSION_HEARTBEAT_INTERVAL="$(metadata_value heartbeat_interval)"
 [ "$SESSION_RELEASE" = "$CLIENT_RELEASE" ] ||
   fail_launch "session release mismatch: session=$SESSION_RELEASE launcher=$CLIENT_RELEASE"
+[ "$SESSION_PROTOCOL" = "2" ] ||
+  fail_launch "session protocol mismatch: $SESSION_PROTOCOL"
 [ "$SESSION_GENERATION" = "$GENERATION" ] ||
   fail_launch "generation mismatch: session=$SESSION_GENERATION caller=$GENERATION"
 if [ "$ROLE" = "driver" ]; then
@@ -152,6 +160,21 @@ else
 fi
 [ -x "$RELEASE_ROOT/bin/agent-comms" ] ||
   fail_launch "pinned release CLI is missing: $RELEASE_ROOT/bin/agent-comms"
+RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
+RUNTIME_ROOT="$(cd "$HERE/.." && pwd)"
+[ "$RUNTIME_ROOT" = "$RELEASE_ROOT" ] ||
+  fail_launch "launcher is not from pinned release: $RUNTIME_ROOT != $RELEASE_ROOT"
+bash "$RELEASE_ROOT/bin/release.sh" verify --root "$RELEASE_ROOT" ||
+  fail_launch "pinned release manifest is invalid"
+ACTUAL_DIGEST="$(file_sha256 "$RELEASE_ROOT/manifest.lock")"
+[ "$ACTUAL_DIGEST" = "$SESSION_DIGEST" ] ||
+  fail_launch "session digest mismatch: $SESSION_DIGEST != $ACTUAL_DIGEST"
+[ "$(plugin_version "$RELEASE_ROOT")" = "$SESSION_RELEASE" ] ||
+  fail_launch "session version does not match pinned release"
+if [ "$GENERATION" -eq 1 ]; then
+  bash "$RELEASE_ROOT/bin/release.sh" doctor --quiet ||
+    fail_launch "global installation drift detected"
+fi
 
 if [ "$RUNTIME" = "claude" ]; then
   ADAPTER_HELP="$(claude --help 2>&1)" || fail_launch "claude --help failed"

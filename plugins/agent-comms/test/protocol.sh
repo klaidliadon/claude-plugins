@@ -26,6 +26,17 @@ init_fixture() {
     --release-root "$FIXTURE/release"
 }
 
+prepare_public_release() {
+  PUBLIC_RELEASE="$FIXTURE/release"
+  cp -R "$DIR" "$PUBLIC_RELEASE"
+  perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
+    "$PUBLIC_RELEASE/.claude-plugin/plugin.json"
+  bash "$DIR/bin/release.sh" manifest --root "$PUBLIC_RELEASE"
+  PUBLIC_RELEASE="$(realpath "$PUBLIC_RELEASE")"
+  PUBLIC_AC="$PUBLIC_RELEASE/bin/agent-comms"
+  PUBLIC_DIGEST="$(bash "$PUBLIC_RELEASE/bin/release.sh" digest --root "$PUBLIC_RELEASE")"
+}
+
 test_frame_roundtrip() {
   new_fixture
   init_fixture
@@ -99,20 +110,21 @@ test_recv_silence_ignores_old_frames() {
 
 test_public_cli_defaults_to_over() {
   new_fixture
+  prepare_public_release
   local comms="$FIXTURE/comms"
   mkdir -p "$comms"
-  bash "$AC" init --channel cli --dir "$comms" --session session-1 \
+  bash "$PUBLIC_AC" init --channel cli --dir "$comms" --session session-1 \
     --driver codex --peer claude --release 2.0.0 \
-    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    --protocol 2 --release-root "$FIXTURE/release"
-  bash "$AC" send --channel cli --dir "$comms" --from codex --generation 1 \
+    --digest "$PUBLIC_DIGEST" \
+    --protocol 2 --release-root "$PUBLIC_RELEASE"
+  bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
     --continue --body-file "$FIXTURE/first"
-  bash "$AC" send --channel cli --dir "$comms" --from codex --generation 1 \
+  bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
     --review-ref "$FIXTURE/final" --body-file "$FIXTURE/final"
 
   local raw out
   raw="$(cat "$comms/cli.md")"
-  out="$(bash "$AC" recv --channel cli --dir "$comms" --me claude --generation 1 \
+  out="$(bash "$PUBLIC_AC" recv --channel cli --dir "$comms" --me claude --generation 1 \
     --silence-seconds 1 --turn-seconds 2)"
   assert_contains "$raw" 'state=continue'
   assert_contains "$raw" 'state=over'
@@ -137,13 +149,14 @@ test_resume_fences_old_generation() {
     --kind message --state continue --tag=- --body-file "$FIXTURE/partial"
   perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
     --replace claude --body-file "$FIXTURE/handoff"
+  local packet
+  packet="$(perl "$PROTOCOL" resume-packet --file "$CHANNEL" --role claude --generation 2)"
   assert_fail perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
     --kind message --state continue --tag=- --body-file "$FIXTURE/stale"
   perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 2 \
     --kind message --state over --tag=- --body-file "$FIXTURE/replacement"
 
-  local packet out transcript
-  packet="$(perl "$PROTOCOL" resume-packet --file "$CHANNEL" --role claude --generation 2)"
+  local out transcript
   out="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me codex \
     --generation 1 --silence-seconds 1 --turn-seconds 2)"
   transcript="$(perl "$PROTOCOL" transcript --file "$CHANNEL")"
@@ -159,17 +172,18 @@ test_resume_fences_old_generation() {
 
 test_public_resume_command() {
   new_fixture
+  prepare_public_release
   local comms="$FIXTURE/comms"
   mkdir -p "$comms"
   printf 'task' > "$FIXTURE/task"
   printf 'handoff' > "$FIXTURE/handoff"
-  bash "$AC" init --channel cli --dir "$comms" --session session-1 \
+  bash "$PUBLIC_AC" init --channel cli --dir "$comms" --session session-1 \
     --driver codex --peer claude --release 2.0.0 \
-    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    --protocol 2 --release-root "$FIXTURE/release"
-  bash "$AC" send --channel cli --dir "$comms" --from codex --generation 1 \
+    --digest "$PUBLIC_DIGEST" \
+    --protocol 2 --release-root "$PUBLIC_RELEASE"
+  bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
     --body-file "$FIXTURE/task"
-  bash "$AC" resume --channel cli --dir "$comms" --from codex --generation 1 \
+  bash "$PUBLIC_AC" resume --channel cli --dir "$comms" --from codex --generation 1 \
     --replace claude --body-file "$FIXTURE/handoff"
   local raw
   raw="$(cat "$comms/cli.md")"
@@ -267,29 +281,55 @@ test_recover_partial_header_append_only() {
 
 test_progress_budget() {
   new_fixture
+  prepare_public_release
   local comms="$FIXTURE/comms"
   mkdir -p "$comms"
   dd if=/dev/zero of="$FIXTURE/progress" bs=512 count=1 2>/dev/null
   dd if=/dev/zero of="$FIXTURE/final-large" bs=1024 count=1 2>/dev/null
-  bash "$AC" init --channel budget --dir "$comms" --session session-1 \
+  bash "$PUBLIC_AC" init --channel budget --dir "$comms" --session session-1 \
     --driver codex --peer claude --release 2.0.0 \
-    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    --protocol 2 --release-root "$FIXTURE/release" \
+    --digest "$PUBLIC_DIGEST" \
+    --protocol 2 --release-root "$PUBLIC_RELEASE" \
     --progress-frames 4 --progress-bytes 512
   local index
   for index in 1 2 3 4; do
-    bash "$AC" send --channel budget --dir "$comms" --from codex --generation 1 \
+    bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
       --continue --body-file "$FIXTURE/progress"
   done
   local before output
   before="$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')"
-  output="$(bash "$AC" send --channel budget --dir "$comms" --from codex --generation 1 \
+  output="$(bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
     --continue --body-file "$FIXTURE/progress" 2>&1)"
   assert_eq "$?" "1"
   assert_contains "$output" 'coalesce progress into the final yielding frame'
   assert_eq "$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')" "$before"
-  assert_ok bash "$AC" send --channel budget --dir "$comms" --from codex --generation 1 \
+  assert_ok bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
     --body-file "$FIXTURE/final-large"
+  rm -rf "$FIXTURE"
+}
+
+test_resume_packet_schema_is_verified() {
+  new_fixture
+  init_fixture
+  printf 'task' > "$FIXTURE/task"
+  cat > "$FIXTURE/malicious-packet" <<EOF
+session=session-1
+role=claude
+generation=2
+open_turn=2
+release=2.0.0
+digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+protocol=2
+release_root=$FIXTURE/release
+task_ref=-
+artifact_ref=-
+next_action=continue
+EOF
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind control --state none --tag=replace=claude.2 --body-file "$FIXTURE/malicious-packet"
+  assert_fail perl "$PROTOCOL" resume-packet --file "$CHANNEL" --role claude --generation 2
   rm -rf "$FIXTURE"
 }
 
@@ -307,6 +347,7 @@ else
   test_recover_partial_body_append_only
   test_recover_partial_header_append_only
   test_progress_budget
+  test_resume_packet_schema_is_verified
 fi
 
 finish_tests "PROTOCOL"

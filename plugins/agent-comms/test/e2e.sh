@@ -2,13 +2,20 @@
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-AC="$DIR/bin/agent-comms"
 source "$DIR/test/testlib.sh"
 
 ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-e2e.XXXXXX")"
 COMMS="$ROOT/comms"
 mkdir -p "$COMMS"
 trap 'rm -rf "$ROOT"' EXIT
+RELEASE_ROOT="$ROOT/release"
+cp -R "$DIR" "$RELEASE_ROOT"
+perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
+  "$RELEASE_ROOT/.claude-plugin/plugin.json"
+bash "$DIR/bin/release.sh" manifest --root "$RELEASE_ROOT"
+RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
+AC="$RELEASE_ROOT/bin/agent-comms"
+RELEASE_DIGEST="$(bash "$RELEASE_ROOT/bin/release.sh" digest --root "$RELEASE_ROOT")"
 
 printf 'review the implementation' > "$ROOT/task"
 printf 'checked protocol state' > "$ROOT/partial"
@@ -20,8 +27,8 @@ printf 'approved' > "$ROOT/approval"
 
 bash "$AC" init --channel review --dir "$COMMS" --session e2e \
   --driver codex --peer claude --release 2.0.0 \
-  --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-  --protocol 2 --release-root "$ROOT/release"
+  --digest "$RELEASE_DIGEST" \
+  --protocol 2 --release-root "$RELEASE_ROOT"
 bash "$AC" send --channel review --dir "$COMMS" --from codex --generation 1 \
   --body-file "$ROOT/task"
 bash "$AC" send --channel review --dir "$COMMS" --from claude --generation 1 \

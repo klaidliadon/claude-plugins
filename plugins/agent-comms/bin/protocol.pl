@@ -566,12 +566,31 @@ sub cmd_resume_packet {
     close($fh);
     my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
     fail("incomplete channel tail") if $incomplete;
-    state_from_frames($frames);
+    my $session = state_from_frames($frames);
     my ($packet) = reverse grep {
         $_->{kind} eq "control" && $_->{tag} eq "replace=$role.$generation"
     } @$frames;
     fail("resume packet not found") unless $packet;
-    print $packet->{block};
+    my $body = $packet->{block};
+    $body =~ s/^[^\n]*\n// or fail("resume packet has no body");
+    $body =~ s/\n\z//;
+    my ($packet_session, $packet_role, $packet_generation, $open_turn, $release,
+        $digest, $protocol, $release_root, $task_ref, $artifact_ref, $next_action) =
+        $body =~ /\Asession=([^\n]+)\nrole=([^\n]+)\ngeneration=(\d+)\nopen_turn=(\d+)\nrelease=([^\n]+)\ndigest=([0-9a-f]{64})\nprotocol=(\d+)\nrelease_root=([^\n]+)\ntask_ref=([^\n]+)\nartifact_ref=([^\n]+)\nnext_action=(.*)\z/s;
+    fail("malformed resume packet") unless defined $next_action;
+    fail("resume packet session mismatch") unless $packet_session eq $session->{session};
+    fail("resume packet role mismatch") unless $packet_role eq $role;
+    fail("resume packet generation mismatch") unless $packet_generation == $generation;
+    fail("resume packet turn mismatch") unless $open_turn == $session->{turn};
+    fail("resume packet release mismatch") unless $release eq $session->{release};
+    fail("resume packet digest mismatch") unless $digest eq $session->{digest};
+    fail("resume packet protocol mismatch") unless $protocol == $session->{protocol};
+    fail("resume packet release root mismatch") unless $release_root eq $session->{release_root};
+    fail("resume packet task ref is invalid") unless $task_ref eq "-" || $task_ref =~ /^[0-9a-f]{64}$/;
+    fail("resume packet artifact ref is invalid") unless
+        $artifact_ref eq "-" || $artifact_ref =~ /^.+\@[0-9a-f]{64}$/;
+    fail("resume packet next action is empty") unless length($next_action);
+    print "$body\n";
 }
 
 sub cmd_transcript {
@@ -590,8 +609,12 @@ sub cmd_transcript {
 
 sub cmd_inspect {
     my (@argv) = @_;
-    my $file;
-    GetOptionsFromArray(\@argv, "file=s" => \$file) or fail("bad inspect arguments");
+    my ($file, $allow_incomplete);
+    GetOptionsFromArray(
+        \@argv,
+        "file=s" => \$file,
+        "allow-incomplete" => \$allow_incomplete,
+    ) or fail("bad inspect arguments");
     fail("missing --file") unless defined $file;
     open(my $fh, "<", $file) or fail("open $file: $!");
     binmode($fh);
@@ -599,7 +622,7 @@ sub cmd_inspect {
     my $data = <$fh>;
     close($fh);
     my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
-    fail("incomplete channel tail") if $incomplete;
+    fail("incomplete channel tail") if $incomplete && !$allow_incomplete;
     my $session = state_from_frames($frames);
     print "session=$session->{session}\n";
     print "driver=$session->{driver}\n";

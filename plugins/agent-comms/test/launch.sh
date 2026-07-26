@@ -10,10 +10,37 @@ new_launch_fixture() {
   FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-launch.XXXXXX")"
   COMMS="$FIXTURE/comms"
   FAKEBIN="$FIXTURE/bin"
+  RELEASE_ROOT="$FIXTURE/release"
   mkdir -p "$COMMS" "$FAKEBIN"
+  cp -R "$DIR" "$RELEASE_ROOT"
+  RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
+  perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
+    "$RELEASE_ROOT/.claude-plugin/plugin.json"
+  bash "$DIR/bin/release.sh" manifest --root "$RELEASE_ROOT"
+  AC="$RELEASE_ROOT/bin/agent-comms"
+  PROTOCOL="$RELEASE_ROOT/bin/protocol.pl"
+  RELEASE_DIGEST="$(bash "$RELEASE_ROOT/bin/release.sh" digest --root "$RELEASE_ROOT")"
+  SHARE="$FIXTURE/share"
+  PUBLIC_BIN="$FIXTURE/home/.local/bin"
+  CODEX_SKILL="$FIXTURE/home/.codex/skills/agent-comms"
+  mkdir -p "$SHARE" "$PUBLIC_BIN" "$(dirname "$CODEX_SKILL")"
+  ln -s "$RELEASE_ROOT" "$SHARE/current"
+  ln -s "$SHARE/current/bin/agent-comms" "$PUBLIC_BIN/agent-comms"
+  ln -s "$SHARE/current/skills/agent-comms" "$CODEX_SKILL"
+  export AGENT_COMMS_MARKETPLACE_ROOT="$RELEASE_ROOT"
+  export AGENT_COMMS_CACHE_BASE="$FIXTURE/cache"
+  export AGENT_COMMS_SHARE_ROOT="$SHARE"
+  export AGENT_COMMS_PUBLIC_BIN="$PUBLIC_BIN"
+  export AGENT_COMMS_CODEX_SKILL="$CODEX_SKILL"
+  export FAKE_RELEASE_ROOT="$RELEASE_ROOT"
   printf 'review the current branch' > "$FIXTURE/prompt"
   cat > "$FAKEBIN/claude" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = "plugin" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; then
+  printf '[{"id":"agent-comms@klaidliadon","version":"2.0.0","enabled":true,"installPath":"%s"}]\n' \
+    "$FAKE_RELEASE_ROOT"
+  exit 0
+fi
 if [ "${1:-}" = "--help" ]; then
   printf '%s\n' '-p --permission-mode --add-dir'
   exit 0
@@ -42,8 +69,8 @@ init_launch_channel() {
   shift
   bash "$AC" init --channel "$channel" --dir "$COMMS" --session "$channel" \
     --driver codex --peer claude --release 2.0.0 \
-    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-    --protocol 2 --release-root "$DIR" "$@"
+    --digest "$RELEASE_DIGEST" \
+    --protocol 2 --release-root "$RELEASE_ROOT" "$@"
 }
 
 test_launch_adapters() {
@@ -79,10 +106,10 @@ test_launch_adapters() {
   assert_contains "$codex_args" '--model'
   assert_not_contains "$codex_args" '--generation'
   assert_contains "$claude_input" 'review the current branch'
-  assert_contains "$claude_input" "$DIR/bin/agent-comms send --channel claude-launch"
-  assert_contains "$claude_input" "$DIR/bin/agent-comms recv --channel claude-launch"
-  assert_contains "$codex_input" "$DIR/bin/agent-comms send --channel codex-launch"
-  assert_contains "$codex_input" "$DIR/bin/agent-comms recv --channel codex-launch"
+  assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms send --channel claude-launch"
+  assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms recv --channel claude-launch"
+  assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms send --channel codex-launch"
+  assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms recv --channel codex-launch"
   rm -rf "$FIXTURE"
 }
 
@@ -141,6 +168,24 @@ test_startup_timeout_is_visible() {
   rm -rf "$FIXTURE"
 }
 
+test_launch_rejects_pinned_digest_before_model() {
+  new_launch_fixture
+  perl "$PROTOCOL" init --file "$COMMS/bad-digest.md" --session bad-digest \
+    --driver codex --peer claude --release 2.0.0 \
+    --digest bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    --protocol 2 --release-root "$RELEASE_ROOT"
+  local output
+  output="$(FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" \
+    PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel bad-digest \
+    --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'pinned release identity mismatch'
+  assert_fail test -e "$FIXTURE/claude.args"
+  rm -rf "$FIXTURE"
+}
+
 test_signal_is_forwarded_and_visible() {
   new_launch_fixture
   init_launch_channel signal
@@ -167,6 +212,7 @@ else
   test_launch_adapters
   test_heartbeat_and_lifecycle
   test_startup_timeout_is_visible
+  test_launch_rejects_pinned_digest_before_model
   test_signal_is_forwarded_and_visible
 fi
 
