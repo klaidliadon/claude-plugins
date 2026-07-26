@@ -38,6 +38,7 @@ sub parse_frames {
     my @frames;
     my $pos = 0;
     my $length = length($data);
+    my $header_damage;
     while ($pos < $length) {
         my $newline = index($data, "\n", $pos);
         return (\@frames, { type => "partial-header", start => $pos }) if $newline < 0 && $allow_incomplete;
@@ -45,7 +46,12 @@ sub parse_frames {
         my $line = substr($data, $pos, $newline - $pos);
         my ($session, $seq, $sender, $generation, $ts, $kind, $turn, $state, $tag, $bytes, $sha) =
             $line =~ /^<!-- agent-comms v=2 session=(\S+) seq=(\d+) sender=(\S+) gen=(\d+) ts=(\S+) kind=(message|status|control) turn=(\d+) state=(continue|over|none|terminal) tag=(\S+) bytes=(\d+) sha256=([0-9a-f]{64}) -->$/;
-        fail("malformed frame header at byte $pos") unless defined $sha;
+        if (!defined $sha) {
+            fail("consecutive malformed frame headers at byte $pos") if $header_damage;
+            $header_damage = { type => "header", start => $pos };
+            $pos = $newline + 1;
+            next;
+        }
         my $body_start = $newline + 1;
         if ($body_start + $bytes > $length) {
             return (\@frames, {
@@ -53,12 +59,19 @@ sub parse_frames {
                 start => $pos,
                 body_start => $body_start,
                 missing => $body_start + $bytes - $length,
+                session => $session,
+                seq => 0 + $seq,
+                sender => $sender,
+                generation => 0 + $generation,
+                kind => $kind,
+                turn => 0 + $turn,
+                state => $state,
+                tag => $tag,
             }) if $allow_incomplete;
             fail("partial frame body at byte $pos");
         }
         my $block = substr($data, $body_start, $bytes);
-        fail("frame checksum mismatch at byte $pos") unless sha256_hex($block) eq $sha;
-        push @frames, {
+        my $frame = {
             start => $pos,
             end => $body_start + $bytes,
             session => $session,
@@ -74,13 +87,19 @@ sub parse_frames {
             sha256 => $sha,
             block => $block,
         };
+        $frame->{damage_before} = $header_damage if $header_damage;
+        $header_damage = undef;
+        $frame->{corrupt} = 1 unless sha256_hex($block) eq $sha;
+        push @frames, $frame;
         $pos = $body_start + $bytes;
     }
+    fail("unrecovered malformed frame header at byte $header_damage->{start}") if $header_damage;
     return (\@frames, undef);
 }
 
 sub init_metadata {
     my ($frame) = @_;
+    fail("damaged hello frame") if $frame->{corrupt} || $frame->{damage_before};
     fail("first frame is not hello") unless
         $frame->{kind} eq "control" && $frame->{tag} eq "hello" && $frame->{seq} == 1;
     my %metadata;
@@ -112,14 +131,62 @@ sub state_from_frames {
         generation => \%generation,
         seq => 0,
     };
+    my $next_seq = 1;
+    my $recovery;
     for my $index (0 .. $#$frames) {
         my $frame = $frames->[$index];
         fail("mixed sessions") unless $frame->{session} eq $state->{session};
-        fail("non-monotonic sequence") unless $frame->{seq} == $index + 1;
+        if ($frame->{damage_before}) {
+            fail("nested tail recovery") if $recovery;
+            $recovery = {
+                type => "header",
+                id => $frame->{damage_before}{start},
+                role => $state->{expected},
+                generation => $state->{generation}{$state->{expected}} + 1,
+                replace_seen => 0,
+            };
+        }
+        fail("non-monotonic sequence") unless $frame->{seq} == $next_seq;
+        $next_seq++;
         $state->{seq} = $frame->{seq};
         next if $index == 0;
+        if ($frame->{corrupt}) {
+            fail("nested tail recovery") if $recovery;
+            fail("corrupt frame is not from the open turn holder") unless
+                $frame->{sender} eq $state->{expected};
+            fail("corrupt frame has invalid generation") unless
+                $frame->{generation} == $state->{generation}{$frame->{sender}};
+            $frame->{stale} = 1;
+            $recovery = {
+                type => "body",
+                id => $frame->{seq},
+                role => $frame->{sender},
+                generation => $frame->{generation} + 1,
+                replace_seen => 0,
+            };
+            next;
+        }
+        if ($recovery && !$recovery->{replace_seen}) {
+            fail("tail damage must be followed by replacement") unless
+                $frame->{kind} eq "control" &&
+                $frame->{tag} eq "replace=$recovery->{role}.$recovery->{generation}";
+            apply_frame($state, $frame);
+            $recovery->{replace_seen} = 1;
+            next;
+        }
+        if ($recovery) {
+            fail("replacement must be followed by recovery control") unless
+                $frame->{sender} eq $state->{driver} &&
+                $frame->{kind} eq "control" &&
+                $frame->{state} eq "none" &&
+                $frame->{tag} eq "recover=$recovery->{type}.$recovery->{id}";
+            apply_frame($state, $frame);
+            $recovery = undef;
+            next;
+        }
         apply_frame($state, $frame);
     }
+    fail("incomplete tail recovery") if $recovery;
     return $state;
 }
 
@@ -134,7 +201,11 @@ sub apply_frame {
     fail("unknown participant $frame->{sender}") unless
         $frame->{sender} eq $session->{driver} || $frame->{sender} eq $session->{peer};
     my $want_generation = $session->{generation}{$frame->{sender}};
-    fail("stale generation") unless $frame->{generation} == $want_generation;
+    if ($frame->{generation} < $want_generation) {
+        $frame->{stale} = 1;
+        return;
+    }
+    fail("future generation") if $frame->{generation} > $want_generation;
     if ($frame->{kind} eq "message") {
         fail("message requires continue or over") unless
             $frame->{state} eq "continue" || $frame->{state} eq "over";
@@ -160,6 +231,15 @@ sub apply_frame {
         return;
     }
     fail("control requires state none") unless $frame->{state} eq "none";
+    if ($frame->{tag} =~ /^replace=([A-Za-z0-9._-]+)\.(\d+)$/) {
+        my ($role, $generation) = ($1, 0 + $2);
+        fail("replacement is driver-only") unless $frame->{sender} eq $session->{driver};
+        fail("replacement must target the open turn holder") unless $role eq $session->{expected};
+        fail("replacement targets unknown participant") unless exists $session->{generation}{$role};
+        fail("replacement generation must increment by one") unless
+            $generation == $session->{generation}{$role} + 1;
+        $session->{generation}{$role} = $generation;
+    }
 }
 
 sub frame_block {
@@ -289,6 +369,181 @@ sub cmd_append {
     seek($fh, 0, SEEK_END) or fail("seek $file: $!");
     print {$fh} $encoded or fail("write $file: $!");
     close($fh) or fail("close $file: $!");
+    if ($candidate->{stale}) {
+        print STDERR "agent-comms protocol: stale generation frame recorded but fenced\n";
+        exit 4;
+    }
+}
+
+sub resume_body {
+    my ($session, $replace, $new_generation, $handoff) = @_;
+    my $body = join("\n",
+        "session=$session->{session}",
+        "role=$replace",
+        "generation=$new_generation",
+        "open_turn=$session->{turn}",
+        "release=$session->{release}",
+        "digest=$session->{digest}",
+        "protocol=$session->{protocol}",
+        "release_root=$session->{release_root}",
+        "task_ref=-",
+        "artifact_ref=-",
+        "next_action=$handoff",
+    );
+    fail("resume packet exceeds 4096 bytes") if length($body) > 4096;
+    return $body;
+}
+
+sub validate_resume_actor {
+    my ($session, $driver, $generation, $replace) = @_;
+    fail("only the driver may replace a participant") unless $driver eq $session->{driver};
+    fail("stale driver generation") unless $generation == $session->{generation}{$driver};
+    fail("replacement must target the open turn holder") unless $replace eq $session->{expected};
+}
+
+sub replacement_frame {
+    my ($session, $driver, $generation, $replace, $new_generation, $seq, $body) = @_;
+    return encode_frame(
+        session => $session->{session},
+        seq => $seq,
+        sender => $driver,
+        generation => 0 + $generation,
+        ts => timestamp(),
+        kind => "control",
+        turn => 0,
+        state => "none",
+        tag => "replace=$replace.$new_generation",
+        body => $body,
+    );
+}
+
+sub resume_session {
+    my (%args) = @_;
+    my $handoff = read_body($args{body_file});
+    fail("resume handoff exceeds 4096 bytes") if length($handoff) > 4096;
+    my ($fh, $data) = open_locked($args{file});
+    my ($frames, $incomplete) = parse_frames($data, 1);
+    fail("recover-tail requires an incomplete tail") if $args{require_incomplete} && !$incomplete;
+    my $session = state_from_frames($frames);
+    validate_resume_actor($session, $args{driver}, $args{generation}, $args{replace});
+    my $new_generation = $session->{generation}{$args{replace}} + 1;
+    my $body = resume_body($session, $args{replace}, $new_generation, $handoff);
+    my $suffix = "";
+    my $replacement_seq = $session->{seq} + 1;
+    my ($damage_type, $damage_id);
+    if ($incomplete && $incomplete->{type} eq "partial-body") {
+        fail("damaged frame has wrong session") unless $incomplete->{session} eq $session->{session};
+        fail("damaged frame has wrong sequence") unless $incomplete->{seq} == $replacement_seq;
+        fail("damaged frame is not from replacement role") unless $incomplete->{sender} eq $args{replace};
+        fail("damaged frame has wrong generation") unless
+            $incomplete->{generation} == $session->{generation}{$args{replace}};
+        $suffix .= "?" x $incomplete->{missing};
+        $damage_type = "body";
+        $damage_id = $incomplete->{seq};
+        $replacement_seq++;
+    } elsif ($incomplete) {
+        my $partial = substr($data, $incomplete->{start});
+        fail("damaged header is not a v2 frame") unless
+            index("<!-- agent-comms v=2 ", $partial) == 0 ||
+            index($partial, "<!-- agent-comms v=2 ") == 0;
+        if ($partial =~ /session=(\S+)/) {
+            fail("damaged header has wrong session") unless $1 eq $session->{session};
+        }
+        if ($partial =~ /seq=(\d+)/) {
+            fail("damaged header has wrong sequence") unless 0 + $1 == $replacement_seq;
+        }
+        if ($partial =~ /sender=(\S+)/) {
+            fail("damaged header is not from replacement role") unless $1 eq $args{replace};
+        }
+        $suffix .= "\n";
+        $damage_type = "header";
+        $damage_id = $incomplete->{start};
+    }
+    $suffix .= replacement_frame(
+        $session,
+        $args{driver},
+        $args{generation},
+        $args{replace},
+        $new_generation,
+        $replacement_seq,
+        $body,
+    );
+    if ($incomplete) {
+        my $recovery_body = join("\n",
+            "damaged_offset=$incomplete->{start}",
+            "fenced=$args{replace}.$session->{generation}{$args{replace}}",
+            "replacement=$args{replace}.$new_generation",
+        );
+        $suffix .= encode_frame(
+            session => $session->{session},
+            seq => $replacement_seq + 1,
+            sender => $args{driver},
+            generation => 0 + $args{generation},
+            ts => timestamp(),
+            kind => "control",
+            turn => 0,
+            state => "none",
+            tag => "recover=$damage_type.$damage_id",
+            body => $recovery_body,
+        );
+    }
+    my ($candidate_frames, $candidate_incomplete) = parse_frames($data . $suffix, 0);
+    fail("recovery did not close the tail") if $candidate_incomplete;
+    state_from_frames($candidate_frames);
+    seek($fh, 0, SEEK_END) or fail("seek $args{file}: $!");
+    print {$fh} $suffix or fail("write $args{file}: $!");
+    close($fh) or fail("close $args{file}: $!");
+    print "generation=$new_generation cursor=", length($data) + length($suffix), "\n";
+}
+
+sub cmd_resume {
+    my ($require_incomplete, @argv) = @_;
+    my ($file, $driver, $generation, $replace, $body_file);
+    GetOptionsFromArray(
+        \@argv,
+        "file=s" => \$file,
+        "driver=s" => \$driver,
+        "generation=i" => \$generation,
+        "replace=s" => \$replace,
+        "body-file=s" => \$body_file,
+    ) or fail("bad resume arguments");
+    fail("missing resume argument") unless
+        defined $file && valid_name($driver) && defined $generation &&
+        valid_name($replace) && defined $body_file;
+    resume_session(
+        file => $file,
+        driver => $driver,
+        generation => $generation,
+        replace => $replace,
+        body_file => $body_file,
+        require_incomplete => $require_incomplete,
+    );
+}
+
+sub cmd_resume_packet {
+    my (@argv) = @_;
+    my ($file, $role, $generation);
+    GetOptionsFromArray(
+        \@argv,
+        "file=s" => \$file,
+        "role=s" => \$role,
+        "generation=i" => \$generation,
+    ) or fail("bad resume-packet arguments");
+    fail("missing resume-packet argument") unless
+        defined $file && valid_name($role) && defined $generation;
+    open(my $fh, "<", $file) or fail("open $file: $!");
+    binmode($fh);
+    local $/;
+    my $data = <$fh>;
+    close($fh);
+    my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
+    fail("incomplete channel tail") if $incomplete;
+    state_from_frames($frames);
+    my ($packet) = reverse grep {
+        $_->{kind} eq "control" && $_->{tag} eq "replace=$role.$generation"
+    } @$frames;
+    fail("resume packet not found") unless $packet;
+    print $packet->{block};
 }
 
 sub cmd_transcript {
@@ -344,6 +599,8 @@ sub cmd_recv {
     my $started = time();
     my $last_frame = $started;
     my $turn_started;
+    my %seen;
+    my @semantic;
     while (1) {
         open(my $fh, "<", $file) or fail("open $file: $!");
         binmode($fh);
@@ -352,12 +609,14 @@ sub cmd_recv {
         close($fh);
         $data = "" unless defined $data;
         my ($frames) = parse_frames($data, 1);
+        my $session = @$frames ? state_from_frames($frames) : undef;
         my @after = grep { $_->{end} > $offset } @$frames;
-        my @semantic;
         my $complete_end;
         for my $frame (@after) {
             next if $frame->{end} <= $offset;
+            next if $seen{$frame->{end}}++;
             $last_frame = time();
+            next if $frame->{stale};
             next if $frame->{sender} eq $me;
             next if $frame->{kind} ne "message";
             $turn_started //= time();
@@ -372,7 +631,6 @@ sub cmd_recv {
             print $_->{block} for @semantic;
             return;
         }
-        my $session = @$frames ? state_from_frames($frames) : undef;
         if (!@semantic && $session && $session->{expected} eq $me && $offset >= length($data)) {
             fail("$me owns the floor and must send before recv");
         }
@@ -394,6 +652,12 @@ if ($command eq "init") {
     cmd_init(@ARGV);
 } elsif ($command eq "append") {
     cmd_append(@ARGV);
+} elsif ($command eq "resume") {
+    cmd_resume(0, @ARGV);
+} elsif ($command eq "recover-tail") {
+    cmd_resume(1, @ARGV);
+} elsif ($command eq "resume-packet") {
+    cmd_resume_packet(@ARGV);
 } elsif ($command eq "recv") {
     cmd_recv(@ARGV);
 } elsif ($command eq "transcript") {

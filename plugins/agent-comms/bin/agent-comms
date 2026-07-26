@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-comms — single entrypoint for the 2-party agent review-loop transport.
-# Subcommands: init | ack | send | recv | transcript | path | hash | doctor | install-codex
+# Subcommands: init | ack | send | recv | resume | transcript | path | hash | doctor | install-codex
 set -euo pipefail
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -17,6 +17,8 @@ usage:
   agent-comms send       --channel C --from F --generation N [--continue] [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
+  agent-comms resume     --channel C --from F --generation N --replace ROLE --body-file F
+                                                             (replace the interrupted peer and emit its bounded resume packet)
   agent-comms transcript --channel C                         (clean chat view)
   agent-comms path       --channel C                         (resolved channel file path)
   agent-comms hash       <file>                              (sha256 of file, for review/approve refs)
@@ -217,6 +219,45 @@ cmd_recv() {
   done
 }
 
+cmd_resume() {
+  local CHANNEL="" FROM="" GENERATION="" REPLACE="" BODYFILE=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --from) FROM="$2"; shift 2;;
+      --generation) GENERATION="$2"; shift 2;;
+      --replace) REPLACE="$2"; shift 2;;
+      --body-file) BODYFILE="$2"; shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$FROM"; then echo "bad --from" >&2; exit 64; fi
+  if ! valid_name "$REPLACE"; then echo "bad --replace" >&2; exit 64; fi
+  case "$GENERATION" in ''|*[!0-9]*) echo "bad --generation" >&2; exit 64;; esac
+  if [ -z "$BODYFILE" ] || [ ! -f "$BODYFILE" ]; then echo "no such --body-file: $BODYFILE" >&2; exit 64; fi
+  local dir file result new_generation offset cursor temporary
+  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
+  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
+  result="$(perl "$HERE/protocol.pl" resume \
+    --file "$file" \
+    --driver "$FROM" \
+    --generation "$GENERATION" \
+    --replace "$REPLACE" \
+    --body-file "$BODYFILE")"
+  case "$result" in
+    generation=[0-9]*" cursor="[0-9]*) ;;
+    *) echo "invalid resume result: $result" >&2; exit 1;;
+  esac
+  new_generation="${result#generation=}"
+  new_generation="${new_generation%% *}"
+  offset="${result##* cursor=}"
+  cursor="$(cursor_file "$CHANNEL" "$REPLACE.$new_generation")"; assert_confined "$cursor"
+  temporary="$cursor.$$"
+  printf '%s\n' "$offset" > "$temporary"
+  mv "$temporary" "$cursor"
+}
+
 cmd_transcript() {
   local CHANNEL=""
   while [ $# -gt 0 ]; do case "$1" in --channel) CHANNEL="$2"; shift 2;; *) shift;; esac; done
@@ -341,6 +382,7 @@ case "$cmd" in
   ack)           cmd_ack "$@";;
   send)          cmd_send "$@";;
   recv)          cmd_recv "$@";;
+  resume)        cmd_resume "$@";;
   transcript)    cmd_transcript "$@";;
   path)          cmd_path "$@";;
   hash)          cmd_hash "$@";;
