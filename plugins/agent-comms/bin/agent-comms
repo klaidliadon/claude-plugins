@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-comms — single entrypoint for the 2-party agent review-loop transport.
-# Subcommands: ack | send | recv | transcript | path | hash | doctor | install-codex
+# Subcommands: init | ack | send | recv | transcript | path | hash | doctor | install-codex
 set -euo pipefail
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -12,8 +12,9 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
+  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R
   agent-comms ack        --channel C --from F                    (append a fixed ready/ACK frame)
-  agent-comms send       --channel C --from F [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
+  agent-comms send       --channel C --from F --generation N [--continue] [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
   agent-comms transcript --channel C                         (clean chat view)
@@ -26,6 +27,39 @@ global options (any subcommand; precedence --dir > --root > $AGENT_COMMS_ROOT > 
   --root DIR   repo root; channel lives at DIR/tmp/agent-comms
   --dir  DIR   exact comms dir (overrides --root); DIR's parent must exist
 EOF
+}
+
+cmd_init() {
+  local CHANNEL="" SESSION="" DRIVER="" PEER="" RELEASE="" DIGEST="" PROTOCOL="" RELEASE_ROOT=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --session) SESSION="$2"; shift 2;;
+      --driver) DRIVER="$2"; shift 2;;
+      --peer) PEER="$2"; shift 2;;
+      --release) RELEASE="$2"; shift 2;;
+      --digest) DIGEST="$2"; shift 2;;
+      --protocol) PROTOCOL="$2"; shift 2;;
+      --release-root) RELEASE_ROOT="$2"; shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$SESSION"; then echo "bad --session" >&2; exit 64; fi
+  if ! valid_name "$DRIVER"; then echo "bad --driver" >&2; exit 64; fi
+  if ! valid_name "$PEER"; then echo "bad --peer" >&2; exit 64; fi
+  local dir file
+  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
+  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
+  perl "$HERE/protocol.pl" init \
+    --file "$file" \
+    --session "$SESSION" \
+    --driver "$DRIVER" \
+    --peer "$PEER" \
+    --release "$RELEASE" \
+    --digest "$DIGEST" \
+    --protocol "$PROTOCOL" \
+    --release-root "$RELEASE_ROOT"
 }
 
 cmd_ack() {
@@ -47,13 +81,15 @@ cmd_ack() {
 }
 
 cmd_send() {
-  local CHANNEL="" FROM="" TAG="" BODYFILE="" REFKIND="" REFFILE=""
+  local CHANNEL="" FROM="" TAG="" BODYFILE="" REFKIND="" REFFILE="" GENERATION="" STATE="over"
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel)        CHANNEL="$2";  shift 2;;
       --from)           FROM="$2";     shift 2;;
       --tag)            TAG="$2";      shift 2;;
       --body-file)      BODYFILE="$2"; shift 2;;
+      --generation)     GENERATION="$2"; shift 2;;
+      --continue)       STATE="continue"; shift;;
       --review-ref)     REFKIND="review-ref";     REFFILE="$2"; shift 2;;
       --approve-ref)    REFKIND="approve-ref";    REFFILE="$2"; shift 2;;
       --converged-ref)  REFKIND="converged-ref";  REFFILE="$2"; shift 2;;
@@ -73,6 +109,28 @@ cmd_send() {
   fi
   if [ -n "$TAG" ] && ! valid_tag "$TAG"; then echo "bad --tag" >&2; exit 64; fi
   if [ -n "$BODYFILE" ] && [ ! -f "$BODYFILE" ]; then echo "no such --body-file: $BODYFILE" >&2; exit 64; fi
+  if [ -n "$GENERATION" ]; then
+    case "$GENERATION" in ''|*[!0-9]*) echo "bad --generation" >&2; exit 64;; esac
+    local v2dir v2file temp_body=""
+    v2dir="$(comms_dir)"; mkdir -p "$v2dir/.cursors/$CHANNEL"
+    v2file="$(channel_file "$CHANNEL")"; assert_confined "$v2file"
+    if [ -z "$BODYFILE" ]; then
+      temp_body="$(mktemp "${TMPDIR:-/tmp}/agent-comms-body.XXXXXX")"
+      trap 'rm -f "${temp_body:-}"' EXIT
+      cat > "$temp_body"
+      BODYFILE="$temp_body"
+    fi
+    [ -n "$TAG" ] || TAG="-"
+    perl "$HERE/protocol.pl" append \
+      --file "$v2file" \
+      --sender "$FROM" \
+      --generation "$GENERATION" \
+      --kind message \
+      --state "$STATE" \
+      --tag="$TAG" \
+      --body-file "$BODYFILE"
+    return
+  fi
   local dir file ts
   dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
   file="$(channel_file "$CHANNEL")"; assert_confined "$file"
@@ -86,17 +144,35 @@ cmd_send() {
 }
 
 cmd_recv() {
-  local CHANNEL="" ME="" TIMEOUT=590
+  local CHANNEL="" ME="" TIMEOUT=590 GENERATION="" SILENCE_SECONDS="" TURN_SECONDS=1800
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel) CHANNEL="$2"; shift 2;;
       --me)      ME="$2";      shift 2;;
       --timeout) TIMEOUT="$2"; shift 2;;
+      --generation) GENERATION="$2"; shift 2;;
+      --silence-seconds) SILENCE_SECONDS="$2"; shift 2;;
+      --turn-seconds) TURN_SECONDS="$2"; shift 2;;
       *) echo "unknown arg: $1" >&2; exit 64;;
     esac
   done
   if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
   if ! valid_name "$ME";      then echo "bad --me"      >&2; exit 64; fi
+  if [ -n "$GENERATION" ]; then
+    [ -n "$SILENCE_SECONDS" ] || SILENCE_SECONDS="$TIMEOUT"
+    local v2dir v2file v2cur
+    v2dir="$(comms_dir)"; mkdir -p "$v2dir/.cursors/$CHANNEL"
+    v2file="$(channel_file "$CHANNEL")"; assert_confined "$v2file"
+    v2cur="$(cursor_file "$CHANNEL" "$ME.$GENERATION")"; assert_confined "$v2cur"
+    perl "$HERE/protocol.pl" recv \
+      --file "$v2file" \
+      --cursor "$v2cur" \
+      --me "$ME" \
+      --generation "$GENERATION" \
+      --silence-seconds "$SILENCE_SECONDS" \
+      --turn-seconds "$TURN_SECONDS"
+    return
+  fi
   local dir file cur off
   dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
   file="$(channel_file "$CHANNEL")"; assert_confined "$file"
@@ -147,6 +223,10 @@ cmd_transcript() {
   if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
   local file idx i
   file="$(channel_file "$CHANNEL")"; [ -e "$file" ] || exit 0
+  if head -1 "$file" | grep -q '<!-- agent-comms v=2 '; then
+    perl "$HERE/protocol.pl" transcript --file "$file"
+    return
+  fi
   bd="${TMPDIR:-/tmp}/actrans.$$.$RANDOM"; mkdir -p "$bd"   # script-global for the EXIT trap below
   trap 'rm -rf "${bd:-}"' EXIT
   idx="$(read_from "$file" 0 | BODY_DIR="$bd" parse_frames 0)"
@@ -257,6 +337,7 @@ done
 set -- ${rest[@]+"${rest[@]}"}
 
 case "$cmd" in
+  init)          cmd_init "$@";;
   ack)           cmd_ack "$@";;
   send)          cmd_send "$@";;
   recv)          cmd_recv "$@";;
