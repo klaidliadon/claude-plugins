@@ -75,7 +75,21 @@ fi
 sleep "${FAKE_SLEEP:-0}"
 exit "${FAKE_EXIT:-0}"
 EOF
-  chmod +x "$FAKEBIN/claude" "$FAKEBIN/codex"
+  cat > "$FAKEBIN/date" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "+%s" ] && [ -n "${FAKE_DATE_COUNTER:-}" ]; then
+  current=0
+  if [ -f "$FAKE_DATE_COUNTER" ]; then
+    read -r current < "$FAKE_DATE_COUNTER"
+  fi
+  current=$((current + 31))
+  printf '%s\n' "$current" > "$FAKE_DATE_COUNTER"
+  printf '%s\n' "$current"
+  exit 0
+fi
+exec /bin/date "$@"
+EOF
+  chmod +x "$FAKEBIN/claude" "$FAKEBIN/codex" "$FAKEBIN/date"
 }
 
 init_launch_channel() {
@@ -250,6 +264,214 @@ test_heartbeat_and_lifecycle() {
   rm -rf "$FIXTURE"
 }
 
+test_sanitized_activity_sampling() {
+  new_launch_fixture
+  init_launch_channel activity --heartbeat-after 1 --heartbeat-interval 1
+  printf 'review activity' > "$FIXTURE/task"
+  printf '%s\n%s\n' \
+    '{"type":"tool","secret":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
+    '{"type":"assistant","text":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
+    > "$FIXTURE/first.jsonl"
+  printf '%s\n' '{"type":"result","secret":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
+    > "$FIXTURE/second.jsonl"
+  bash "$AC" send --channel activity --dir "$COMMS" --from codex --generation 1 \
+    --body-file "$FIXTURE/task"
+  FAKE_ARGS="$FIXTURE/activity.args" FAKE_STDIN="$FIXTURE/activity.stdin" \
+    FAKE_STDOUT_FILE="$FIXTURE/first.jsonl" \
+    FAKE_STDOUT_SECOND_FILE="$FIXTURE/second.jsonl" FAKE_STDOUT_GAP=1.5 \
+    FAKE_SLEEP=2 FAKE_DATE_COUNTER="$FIXTURE/date.counter" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel activity \
+    --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS"
+
+  local activity_dir activity raw feed tick_count spool_count
+  activity_dir="$(cd "$COMMS" && pwd -P)/.activity/activity"
+  activity="$activity_dir/claude.1.log"
+  raw="$(cat "$COMMS/activity.md")"
+  feed="$(cat "$activity")"
+  tick_count="$(grep -c '^ts=.* seq=' "$activity")"
+  spool_count="$(find "$activity_dir" -name '.spool.*' -print | wc -l | tr -d ' ')"
+  assert_eq "$tick_count" "2"
+  assert_contains "$feed" 'seq=1'
+  assert_contains "$feed" 'seq=2'
+  assert_not_contains "$feed" 'seq=3'
+  assert_not_contains "$feed" 'bytes='
+  assert_not_contains "$feed" 'ACTIVITY_SECRET_DO_NOT_COPY'
+  assert_not_contains "$raw" 'ACTIVITY_SECRET_DO_NOT_COPY'
+  assert_contains "$raw" 'activity_seq=2'
+  assert_contains "$raw" 'activity_idle='
+  assert_eq "$spool_count" "0"
+  rm -rf "$FIXTURE"
+}
+
+test_activity_generation_fencing() {
+  new_launch_fixture
+  init_launch_channel activity-resume --heartbeat-after 1 --heartbeat-interval 1
+  printf 'review activity' > "$FIXTURE/task"
+  printf 'resume activity review' > "$FIXTURE/handoff"
+  printf '%s\n' '{"type":"tool","text":"generation activity"}' > "$FIXTURE/output.jsonl"
+  bash "$AC" send --channel activity-resume --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+  FAKE_ARGS="$FIXTURE/generation-1.args" FAKE_STDIN="$FIXTURE/generation-1.stdin" \
+    FAKE_STDOUT_FILE="$FIXTURE/output.jsonl" FAKE_SLEEP=2 \
+    FAKE_DATE_COUNTER="$FIXTURE/date-1.counter" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel activity-resume \
+    --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS"
+  bash "$AC" resume --channel activity-resume --dir "$COMMS" \
+    --from codex --generation 1 --replace claude \
+    --body-file "$FIXTURE/handoff"
+  FAKE_ARGS="$FIXTURE/generation-2.args" FAKE_STDIN="$FIXTURE/generation-2.stdin" \
+    FAKE_STDOUT_FILE="$FIXTURE/output.jsonl" FAKE_SLEEP=2 \
+    FAKE_DATE_COUNTER="$FIXTURE/date-2.counter" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel activity-resume \
+    --generation 2 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS"
+
+  local activity_dir first second
+  activity_dir="$(cd "$COMMS" && pwd -P)/.activity/activity-resume"
+  first="$(cat "$activity_dir/claude.1.log")"
+  second="$(cat "$activity_dir/claude.2.log")"
+  assert_contains "$first" 'seq=1'
+  assert_not_contains "$first" 'seq=2'
+  assert_contains "$second" 'seq=1'
+  assert_not_contains "$second" 'seq=2'
+  assert_contains "$(cat "$COMMS/activity-resume.md")" \
+    "activity_ref=$activity_dir/claude.2.log"
+  rm -rf "$FIXTURE"
+}
+
+test_activity_write_failure_is_fail_open() {
+  new_launch_fixture
+  init_launch_channel activity-write-failure --heartbeat-after 1 --heartbeat-interval 1
+  printf 'review activity' > "$FIXTURE/task"
+  printf '%s\n' '{"type":"tool","text":"activity"}' > "$FIXTURE/output.jsonl"
+  bash "$AC" send --channel activity-write-failure --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+  FAKE_ARGS="$FIXTURE/write-failure.args" \
+    FAKE_STDIN="$FIXTURE/write-failure.stdin" \
+    FAKE_STDOUT_FILE="$FIXTURE/output.jsonl" FAKE_SLEEP=3 FAKE_EXIT=7 \
+    FAKE_DATE_COUNTER="$FIXTURE/date.counter" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel activity-write-failure --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1 &
+  local launcher_pid=$! activity attempts=0
+  activity="$(cd "$COMMS" && pwd -P)/.activity/activity-write-failure/claude.1.log"
+  while [ ! -f "$activity" ] && [ "$attempts" -lt 100 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  chmod 400 "$activity"
+  wait "$launcher_pid"
+  assert_eq "$?" "7"
+  assert_contains "$(cat "$COMMS/activity-write-failure.md")" \
+    'tag=activity-disabled=write'
+  rm -rf "$FIXTURE"
+}
+
+test_activity_sampler_death_is_fail_open() {
+  new_launch_fixture
+  init_launch_channel activity-sampler-death
+  FAKE_ARGS="$FIXTURE/sampler-death.args" \
+    FAKE_STDIN="$FIXTURE/sampler-death.stdin" FAKE_SLEEP=3 FAKE_EXIT=7 \
+    PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel activity-sampler-death --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1 &
+  local launcher_pid=$! heartbeat_pid attempts=0
+  while [ ! -f "$FIXTURE/sampler-death.args" ] && [ "$attempts" -lt 100 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  heartbeat_pid="$(ps -axo pid=,ppid=,command= |
+    awk -v parent="$launcher_pid" \
+      '$2 == parent && $0 ~ /bin\/launch\.sh/ {print $1; exit}')"
+  if [ -z "$heartbeat_pid" ]; then
+    fail "heartbeat child was not found"
+  else
+    kill -KILL "$heartbeat_pid"
+  fi
+  wait "$launcher_pid"
+  assert_eq "$?" "7"
+  rm -rf "$FIXTURE"
+}
+
+test_activity_shutdown_is_bounded() {
+  new_launch_fixture
+  init_launch_channel activity-bounded-shutdown
+  FAKE_ARGS="$FIXTURE/bounded.args" FAKE_STDIN="$FIXTURE/bounded.stdin" \
+    FAKE_SLEEP=2 FAKE_EXIT=7 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel activity-bounded-shutdown --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1 &
+  local launcher_pid=$! heartbeat_pid watchdog_pid attempts=0
+  while [ ! -f "$FIXTURE/bounded.args" ] && [ "$attempts" -lt 100 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  heartbeat_pid="$(ps -axo pid=,ppid=,command= |
+    awk -v parent="$launcher_pid" \
+      '$2 == parent && $0 ~ /bin\/launch\.sh/ {print $1; exit}')"
+  if [ -z "$heartbeat_pid" ]; then
+    fail "heartbeat child was not found"
+  else
+    kill -STOP "$heartbeat_pid"
+  fi
+  (
+    sleep 7
+    kill -KILL "$launcher_pid" 2>/dev/null || true
+  ) &
+  watchdog_pid=$!
+  wait "$launcher_pid"
+  assert_eq "$?" "7"
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  kill -KILL "$heartbeat_pid" 2>/dev/null || true
+  rm -rf "$FIXTURE"
+}
+
+test_activity_rejects_symlink_paths() {
+  new_launch_fixture
+  mkdir "$FIXTURE/outside"
+  init_launch_channel activity-root-symlink
+  ln -s "$FIXTURE/outside" "$COMMS/.activity"
+  local output raw
+  output="$(FAKE_ARGS="$FIXTURE/root-symlink.args" \
+    FAKE_STDIN="$FIXTURE/root-symlink.stdin" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel activity-root-symlink --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'activity path is a symlink'
+  assert_fail test -e "$FIXTURE/root-symlink.args"
+  raw="$(cat "$COMMS/activity-root-symlink.md")"
+  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
+  assert_not_contains "$raw" 'tag=started'
+
+  rm "$COMMS/.activity"
+  mkdir "$COMMS/.activity"
+  chmod 700 "$COMMS/.activity"
+  init_launch_channel activity-channel-symlink
+  ln -s "$FIXTURE/outside" "$COMMS/.activity/activity-channel-symlink"
+  output="$(FAKE_ARGS="$FIXTURE/channel-symlink.args" \
+    FAKE_STDIN="$FIXTURE/channel-symlink.stdin" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel activity-channel-symlink --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'activity path is a symlink'
+  assert_fail test -e "$FIXTURE/channel-symlink.args"
+  raw="$(cat "$COMMS/activity-channel-symlink.md")"
+  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
+  assert_not_contains "$raw" 'tag=started'
+  rm -rf "$FIXTURE"
+}
+
 test_heartbeat_requires_open_turn() {
   new_launch_fixture
   init_launch_channel waiting --heartbeat-after 1 --heartbeat-interval 1
@@ -351,6 +573,12 @@ else
   test_launch_adapters
   test_activity_setup_and_flag_validation
   test_heartbeat_and_lifecycle
+  test_sanitized_activity_sampling
+  test_activity_generation_fencing
+  test_activity_write_failure_is_fail_open
+  test_activity_sampler_death_is_fail_open
+  test_activity_shutdown_is_bounded
+  test_activity_rejects_symlink_paths
   test_heartbeat_requires_open_turn
   test_startup_timeout_is_visible
   test_launch_rejects_pinned_digest_before_model

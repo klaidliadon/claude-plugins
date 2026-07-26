@@ -85,17 +85,75 @@ prepare_activity() {
   ACTIVITY_SPOOL=""
 }
 
+activity_size() {
+  perl -e '
+    open my $handle, "<&=$ARGV[0]" or exit 1;
+    my @metadata = stat($handle);
+    @metadata or exit 1;
+    print $metadata[7];
+  ' "$ACTIVITY_META_FD"
+}
+
+append_activity() {
+  local epoch="$1" sequence="$2"
+  perl -MFcntl=:flock -MPOSIX=strftime -e '
+    my ($path, $epoch, $sequence) = @ARGV;
+    my @path_metadata = lstat($path);
+    @path_metadata or exit 1;
+    -l _ and exit 1;
+    open my $handle, ">>", $path or exit 1;
+    flock($handle, LOCK_EX) or exit 1;
+    my @handle_metadata = stat($handle);
+    @handle_metadata or exit 1;
+    $path_metadata[0] == $handle_metadata[0] or exit 1;
+    $path_metadata[1] == $handle_metadata[1] or exit 1;
+    my $timestamp = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime($epoch));
+    print {$handle} "ts=$timestamp seq=$sequence\n" or exit 1;
+    close $handle or exit 1;
+  ' "$ACTIVITY_FILE" "$epoch" "$sequence"
+}
+
 heartbeat_loop() {
   local child_pid="$1" after="$2" interval="$3"
   local last_size quiet_since last_heartbeat current_size now elapsed state
+  local activity_enabled activity_seq activity_last_size activity_current_size
+  local activity_last_at activity_last_sample activity_next_sequence
   last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
   quiet_since="$(date +%s)"
   last_heartbeat="$quiet_since"
+  activity_enabled=1
+  activity_seq=0
+  activity_last_size=0
+  activity_last_at="$quiet_since"
+  activity_last_sample="$quiet_since"
   while kill -0 "$child_pid" 2>/dev/null; do
     sleep 1
     kill -0 "$child_pid" 2>/dev/null || break
-    current_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
     now="$(date +%s)"
+    if [ "$activity_enabled" -eq 1 ] &&
+        [ $((now - activity_last_sample)) -ge "$ACTIVITY_SAMPLE_INTERVAL" ]; then
+      if activity_current_size="$(activity_size)" &&
+          case "$activity_current_size" in ''|*[!0-9]*) false;; *) true;; esac; then
+        if [ "$activity_current_size" -gt "$activity_last_size" ]; then
+          activity_next_sequence=$((activity_seq + 1))
+          if append_activity "$now" "$activity_next_sequence"; then
+            activity_seq="$activity_next_sequence"
+            activity_last_at="$now"
+          else
+            append_lifecycle "activity-disabled=write" \
+              "runtime=$RUNTIME role=$ROLE generation=$GENERATION" || true
+            activity_enabled=0
+          fi
+        fi
+        activity_last_size="$activity_current_size"
+      else
+        append_lifecycle "activity-disabled=sample" \
+          "runtime=$RUNTIME role=$ROLE generation=$GENERATION" || true
+        activity_enabled=0
+      fi
+      activity_last_sample="$now"
+    fi
+    current_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
     if [ "$current_size" != "$last_size" ]; then
       last_size="$current_size"
       quiet_since="$now"
@@ -113,7 +171,8 @@ heartbeat_loop() {
       *$'terminal=0\n'*$'expected='"$ME"$'\n'*) ;;
       *) continue;;
     esac
-    append_lifecycle alive "elapsed=${elapsed}s"
+    append_lifecycle alive \
+      "elapsed=${elapsed}s activity_seq=$activity_seq activity_idle=$((now - activity_last_at))s"
     last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
     last_heartbeat="$now"
   done
@@ -181,6 +240,7 @@ ACTIVITY_FILE=""
 ACTIVITY_SPOOL=""
 ACTIVITY_WRITE_FD=""
 ACTIVITY_META_FD=""
+ACTIVITY_SAMPLE_INTERVAL=30
 cleanup_launch() {
   rm -f "$METADATA_FILE" "$BOOTSTRAP_FILE" "$CONTROL_CURSOR"
   if [ -n "$RESUME_PACKET_FILE" ]; then
@@ -196,6 +256,20 @@ cleanup_launch() {
     exec 9<&-
   fi
 }
+stop_heartbeat() {
+  local attempts=0
+  [ -n "$HEARTBEAT_PID" ] || return
+  kill "$HEARTBEAT_PID" 2>/dev/null || true
+  while kill -0 "$HEARTBEAT_PID" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  if kill -0 "$HEARTBEAT_PID" 2>/dev/null; then
+    kill -KILL "$HEARTBEAT_PID" 2>/dev/null || true
+  fi
+  wait "$HEARTBEAT_PID" 2>/dev/null || true
+  HEARTBEAT_PID=""
+}
 handle_signal() {
   local signal="$1" status="$2"
   trap - INT TERM
@@ -203,10 +277,7 @@ handle_signal() {
     kill -"$signal" "$CHILD_PID" 2>/dev/null || true
     wait "$CHILD_PID" 2>/dev/null || true
   fi
-  if [ -n "$HEARTBEAT_PID" ]; then
-    kill "$HEARTBEAT_PID" 2>/dev/null || true
-    wait "$HEARTBEAT_PID" 2>/dev/null || true
-  fi
+  stop_heartbeat
   append_lifecycle "signal=$signal" "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
   exit "$status"
 }
@@ -389,7 +460,6 @@ heartbeat_loop "$CHILD_PID" "$HEARTBEAT_AFTER" "$HEARTBEAT_INTERVAL" &
 HEARTBEAT_PID=$!
 child_status=0
 wait "$CHILD_PID" || child_status=$?
-kill "$HEARTBEAT_PID" 2>/dev/null || true
-wait "$HEARTBEAT_PID" 2>/dev/null || true
+stop_heartbeat
 append_lifecycle "exit=$child_status" "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
 exit "$child_status"
