@@ -53,6 +53,26 @@ Channels pin `release`, `digest`, `protocol`, and an absolute immutable
 dispatch to the pinned root; a missing old release is an error, never a fallback
 to `current`. V2 has no pruning command.
 
+## Runtime activity
+
+`launch` forces Claude `stream-json` or Codex `--json` output and fails before
+model work when the installed adapter lacks that capability. It publishes a
+generation-scoped feed at:
+
+```text
+D/.activity/C/<agent>.<generation>.log
+```
+
+The feed records at most one `ts=… seq=N` tick per active 30-second window:
+120 lines per active hour and zero peer-model turns. Files share the comms
+directory's retention lifecycle.
+
+Raw structured output exists only in a mode-`0600` spool unlinked before the
+runtime starts. It has no pathname while populated but can reach page cache or
+backing storage; this is not protection from local forensic access. Sampling
+and feed-write failures are fail-open after startup and never replace the
+runtime exit status.
+
 ## V1 migration
 
 Finish or explicitly stop every v1 channel before installing v2. V1 has no

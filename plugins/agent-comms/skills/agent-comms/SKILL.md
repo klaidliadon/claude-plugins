@@ -13,7 +13,9 @@ Release literal: `--client-release 2.0.0`. Never derive or change it at runtime.
 
 ## Start a review
 
-Pick one absolute `--dir` and pass it on every command.
+Pick one absolute `--dir` writable by both runtime sandboxes and pass it on
+every command. Prefer the project's `tmp/`; a host deny rule can still block a
+path passed through `--add-dir`.
 
 1. Create the channel. The invoked immutable release pins its own version,
    digest, protocol, and root:
@@ -66,6 +68,13 @@ never manufacture updates just to consume the budget.
 Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status
 `open|resolved|contested`. Only unresolved Critical/Important findings block
 approval.
+
+## Tail activity without waking the peer
+
+`hello-ack` and `started` publish `activity_ref=<absolute path>`. Humans and
+external supervisors may tail it. `seq` advances at most once per active
+30-second window and exposes no content or byte count. Activity never yields or
+wakes `recv`; never relay it to the waiting model.
 
 ## Resume an interrupted peer
 
