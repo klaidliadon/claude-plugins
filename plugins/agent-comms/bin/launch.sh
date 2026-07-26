@@ -40,6 +40,51 @@ append_lifecycle() {
   rm -f "$body_file"
 }
 
+prepare_private_directory() {
+  local directory="$1" physical_root="$2" physical_directory
+  [ ! -L "$directory" ] || fail_launch "activity path is a symlink: $directory"
+  if [ ! -e "$directory" ]; then
+    (umask 077; mkdir "$directory") ||
+      fail_launch "cannot create activity directory: $directory"
+  fi
+  [ -d "$directory" ] && [ ! -L "$directory" ] ||
+    fail_launch "activity path is not a directory: $directory"
+  physical_directory="$(realpath "$directory")"
+  case "$physical_directory/" in
+    "$physical_root/"*) ;;
+    *) fail_launch "activity path escapes comms directory: $directory";;
+  esac
+  chmod 700 "$directory" ||
+    fail_launch "cannot secure activity directory: $directory"
+}
+
+prepare_activity() {
+  local comms_physical
+  comms_physical="$(realpath "$COMMS_DIRECTORY")"
+  ACTIVITY_ROOT="$comms_physical/.activity"
+  ACTIVITY_DIRECTORY="$ACTIVITY_ROOT/$CHANNEL"
+  ACTIVITY_FILE="$ACTIVITY_DIRECTORY/$ME.$GENERATION.log"
+  prepare_private_directory "$ACTIVITY_ROOT" "$comms_physical"
+  prepare_private_directory "$ACTIVITY_DIRECTORY" "$comms_physical"
+  if [ -e "$ACTIVITY_FILE" ] || [ -L "$ACTIVITY_FILE" ]; then
+    fail_launch "activity file already exists: $ACTIVITY_FILE"
+  fi
+  (umask 077; set -o noclobber; : > "$ACTIVITY_FILE") ||
+    fail_launch "cannot create activity file: $ACTIVITY_FILE"
+  chmod 600 "$ACTIVITY_FILE" ||
+    fail_launch "cannot secure activity file: $ACTIVITY_FILE"
+  ACTIVITY_SPOOL="$(mktemp "$ACTIVITY_DIRECTORY/.spool.$ME.$GENERATION.XXXXXX")" ||
+    fail_launch "cannot create activity spool"
+  chmod 600 "$ACTIVITY_SPOOL" ||
+    fail_launch "cannot secure activity spool"
+  exec 8>>"$ACTIVITY_SPOOL"
+  exec 9<"$ACTIVITY_SPOOL"
+  ACTIVITY_WRITE_FD=8
+  ACTIVITY_META_FD=9
+  rm -f "$ACTIVITY_SPOOL"
+  ACTIVITY_SPOOL=""
+}
+
 heartbeat_loop() {
   local child_pid="$1" after="$2" interval="$3"
   local last_size quiet_since last_heartbeat current_size now elapsed state
@@ -106,6 +151,16 @@ case "$GENERATION" in ''|*[!0-9]*) fail_launch "bad --generation";; esac
 [ -f "$PROMPT_FILE" ] || fail_launch "prompt file not found: $PROMPT_FILE"
 [ "$DECLARED_RELEASE" = "$CLIENT_RELEASE" ] ||
   fail_launch "client release mismatch: launcher=$CLIENT_RELEASE caller=${DECLARED_RELEASE:-missing}"
+if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
+  for argument in "${RUNTIME_ARGS[@]}"; do
+    case "$argument" in
+      --output-format|--output-format=*|--input-format|--input-format=*|\
+      --include-partial-messages|--include-partial-messages=*|--json)
+        fail_launch "runtime output flag is owned by agent-comms: $argument"
+        ;;
+    esac
+  done
+fi
 
 ME="$RUNTIME"
 COMMS_DIRECTORY="$(comms_dir)"
@@ -120,10 +175,25 @@ CONTROL_CURSOR="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-control.XXXXXX")"
 RESUME_PACKET_FILE=""
 CHILD_PID=""
 HEARTBEAT_PID=""
+ACTIVITY_ROOT=""
+ACTIVITY_DIRECTORY=""
+ACTIVITY_FILE=""
+ACTIVITY_SPOOL=""
+ACTIVITY_WRITE_FD=""
+ACTIVITY_META_FD=""
 cleanup_launch() {
   rm -f "$METADATA_FILE" "$BOOTSTRAP_FILE" "$CONTROL_CURSOR"
   if [ -n "$RESUME_PACKET_FILE" ]; then
     rm -f "$RESUME_PACKET_FILE"
+  fi
+  if [ -n "$ACTIVITY_SPOOL" ]; then
+    rm -f "$ACTIVITY_SPOOL"
+  fi
+  if [ -n "$ACTIVITY_WRITE_FD" ]; then
+    exec 8>&-
+  fi
+  if [ -n "$ACTIVITY_META_FD" ]; then
+    exec 9<&-
   fi
 }
 handle_signal() {
@@ -190,6 +260,10 @@ if [ "$RUNTIME" = "claude" ]; then
   case "$ADAPTER_HELP" in *-p*) ;; *) fail_launch "claude adapter is missing -p";; esac
   case "$ADAPTER_HELP" in *--permission-mode*) ;; *) fail_launch "claude adapter is missing --permission-mode";; esac
   case "$ADAPTER_HELP" in *--add-dir*) ;; *) fail_launch "claude adapter is missing --add-dir";; esac
+  case "$ADAPTER_HELP" in *--output-format*) ;;
+    *) fail_launch "claude adapter is missing --output-format";;
+  esac
+  case "$ADAPTER_HELP" in *--verbose*) ;; *) fail_launch "claude adapter is missing --verbose";; esac
 else
   ADAPTER_HELP="$(codex exec --help 2>&1)" || fail_launch "codex exec --help failed"
   case "$ADAPTER_HELP" in *--dangerously-bypass-approvals-and-sandbox*) ;;
@@ -198,6 +272,7 @@ else
   case "$ADAPTER_HELP" in *--skip-git-repo-check*) ;;
     *) fail_launch "codex adapter is missing --skip-git-repo-check";;
   esac
+  case "$ADAPTER_HELP" in *--json*) ;; *) fail_launch "codex adapter is missing --json";; esac
 fi
 
 if [ "$GENERATION" -gt 1 ]; then
@@ -213,10 +288,13 @@ if [ "$GENERATION" -gt 1 ]; then
   fi
 fi
 
+prepare_activity
+
 if [ "$ROLE" = "reviewer" ]; then
   READY_BODY="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-ready.XXXXXX")"
-  printf 'session=%s role=%s generation=%s release=%s' \
-    "$(metadata_value session)" "$ME" "$GENERATION" "$SESSION_RELEASE" > "$READY_BODY"
+  printf 'session=%s role=%s generation=%s release=%s\nactivity_ref=%s' \
+    "$(metadata_value session)" "$ME" "$GENERATION" "$SESSION_RELEASE" \
+    "$ACTIVITY_FILE" > "$READY_BODY"
   perl "$HERE/protocol.pl" append \
     --file "$CHANNEL_FILE" \
     --sender "$ME" \
@@ -275,7 +353,8 @@ render_command RECV_COMMAND "$PINNED_AC" recv --channel "$CHANNEL" --dir "$COMMS
 } > "$BOOTSTRAP_FILE"
 
 WORK_ROOT="${COMMS_ROOT_FLAG:-$PWD}"
-append_lifecycle started "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
+append_lifecycle started \
+  "runtime=$RUNTIME role=$ROLE generation=$GENERATION activity_ref=$ACTIVITY_FILE"
 HEARTBEAT_AFTER="$SESSION_HEARTBEAT_AFTER"
 HEARTBEAT_INTERVAL="$SESSION_HEARTBEAT_INTERVAL"
 case "$HEARTBEAT_AFTER" in ''|*[!0-9]*) fail_launch "bad heartbeat delay";; esac
@@ -286,19 +365,23 @@ if [ "$RUNTIME" = "claude" ]; then
   if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
     claude -p --permission-mode bypassPermissions \
       --add-dir "$WORK_ROOT" --add-dir "$COMMS_DIRECTORY" \
-      "${RUNTIME_ARGS[@]}" < "$BOOTSTRAP_FILE" &
+      --output-format stream-json --verbose \
+      "${RUNTIME_ARGS[@]}" < "$BOOTSTRAP_FILE" >&8 &
   else
     claude -p --permission-mode bypassPermissions \
       --add-dir "$WORK_ROOT" --add-dir "$COMMS_DIRECTORY" \
-      < "$BOOTSTRAP_FILE" &
+      --output-format stream-json --verbose \
+      < "$BOOTSTRAP_FILE" >&8 &
   fi
 else
   if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
-    codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-      "${RUNTIME_ARGS[@]}" < "$BOOTSTRAP_FILE" &
+    codex exec --dangerously-bypass-approvals-and-sandbox \
+      --skip-git-repo-check --json \
+      "${RUNTIME_ARGS[@]}" < "$BOOTSTRAP_FILE" >&8 &
   else
-    codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \
-      < "$BOOTSTRAP_FILE" &
+    codex exec --dangerously-bypass-approvals-and-sandbox \
+      --skip-git-repo-check --json \
+      < "$BOOTSTRAP_FILE" >&8 &
   fi
 fi
 CHILD_PID=$!

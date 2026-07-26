@@ -42,22 +42,36 @@ if [ "${1:-}" = "plugin" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; 
   exit 0
 fi
 if [ "${1:-}" = "--help" ]; then
-  printf '%s\n' '--add-dir --permission-mode -p'
+  printf '%s\n' "${FAKE_CLAUDE_HELP:---add-dir --permission-mode -p --output-format --verbose}"
   exit 0
 fi
 printf '%s\n' "$@" > "$FAKE_ARGS"
 cat > "$FAKE_STDIN"
+if [ -n "${FAKE_STDOUT_FILE:-}" ]; then
+  cat "$FAKE_STDOUT_FILE"
+fi
+if [ -n "${FAKE_STDOUT_SECOND_FILE:-}" ]; then
+  sleep "${FAKE_STDOUT_GAP:-1.5}"
+  cat "$FAKE_STDOUT_SECOND_FILE"
+fi
 sleep "${FAKE_SLEEP:-0}"
 exit "${FAKE_EXIT:-0}"
 EOF
   cat > "$FAKEBIN/codex" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = "exec" ] && [ "${2:-}" = "--help" ]; then
-  printf '%s\n' '--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check'
+  printf '%s\n' "${FAKE_CODEX_HELP:---dangerously-bypass-approvals-and-sandbox --skip-git-repo-check --json}"
   exit 0
 fi
 printf '%s\n' "$@" > "$FAKE_ARGS"
 cat > "$FAKE_STDIN"
+if [ -n "${FAKE_STDOUT_FILE:-}" ]; then
+  cat "$FAKE_STDOUT_FILE"
+fi
+if [ -n "${FAKE_STDOUT_SECOND_FILE:-}" ]; then
+  sleep "${FAKE_STDOUT_GAP:-1.5}"
+  cat "$FAKE_STDOUT_SECOND_FILE"
+fi
 sleep "${FAKE_SLEEP:-0}"
 exit "${FAKE_EXIT:-0}"
 EOF
@@ -92,21 +106,26 @@ test_launch_adapters() {
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
     --dir "$COMMS" -- --model gpt-5
 
-  local claude_args codex_args claude_input codex_input comms_arg
+  local claude_args codex_args claude_input codex_input comms_arg comms_physical
   claude_args="$(cat "$FIXTURE/claude.args")"
   codex_args="$(cat "$FIXTURE/codex.args")"
   claude_input="$(cat "$FIXTURE/claude.stdin")"
   codex_input="$(cat "$FIXTURE/codex.stdin")"
   comms_arg="$(cd "$COMMS" && pwd)"
+  comms_physical="$(cd "$COMMS" && pwd -P)"
   assert_contains "$claude_args" '-p'
   assert_contains "$claude_args" '--permission-mode'
   assert_contains "$claude_args" '--add-dir'
+  assert_contains "$claude_args" '--output-format'
+  assert_contains "$claude_args" 'stream-json'
+  assert_contains "$claude_args" '--verbose'
   assert_contains "$claude_args" "$comms_arg"
   assert_contains "$claude_args" '--model'
   assert_not_contains "$claude_args" '--channel'
   assert_contains "$codex_args" 'exec'
   assert_contains "$codex_args" '--dangerously-bypass-approvals-and-sandbox'
   assert_contains "$codex_args" '--skip-git-repo-check'
+  assert_contains "$codex_args" '--json'
   assert_contains "$codex_args" '--model'
   assert_not_contains "$codex_args" '--generation'
   assert_contains "$claude_input" 'review the current branch'
@@ -121,6 +140,72 @@ test_launch_adapters() {
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms send --channel codex-launch"
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms recv --channel codex-launch"
   assert_contains "$codex_input" 'You own the first turn'
+  assert_contains "$(cat "$COMMS/claude-launch.md")" \
+    "activity_ref=$comms_physical/.activity/claude-launch/claude.1.log"
+  assert_contains "$(cat "$COMMS/codex-launch.md")" \
+    "activity_ref=$comms_physical/.activity/codex-launch/codex.1.log"
+  rm -rf "$FIXTURE"
+}
+
+test_activity_setup_and_flag_validation() {
+  new_launch_fixture
+  init_launch_channel activity-setup
+  FAKE_ARGS="$FIXTURE/setup.args" FAKE_STDIN="$FIXTURE/setup.stdin" \
+    PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel activity-setup \
+    --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS"
+
+  local activity activity_dir directory_mode file_mode output raw
+  activity_dir="$(cd "$COMMS" && pwd -P)/.activity/activity-setup"
+  activity="$activity_dir/claude.1.log"
+  assert_ok test -f "$activity"
+  directory_mode="$(perl -e '@s=stat($ARGV[0]); printf "%o", $s[2] & 07777' "$activity_dir")"
+  file_mode="$(perl -e '@s=stat($ARGV[0]); printf "%o", $s[2] & 07777' "$activity")"
+  assert_eq "$directory_mode" "700"
+  assert_eq "$file_mode" "600"
+
+  init_launch_channel claude-output-conflict
+  output="$(FAKE_ARGS="$FIXTURE/conflict-claude.args" \
+    FAKE_STDIN="$FIXTURE/conflict-claude.stdin" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel claude-output-conflict --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" -- --output-format text 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'runtime output flag is owned by agent-comms'
+  assert_fail test -e "$FIXTURE/conflict-claude.args"
+  raw="$(cat "$COMMS/claude-output-conflict.md")"
+  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
+  assert_not_contains "$raw" 'tag=started'
+
+  init_launch_channel codex-output-conflict
+  output="$(FAKE_ARGS="$FIXTURE/conflict-codex.args" \
+    FAKE_STDIN="$FIXTURE/conflict-codex.stdin" \
+    AGENT_COMMS_STARTUP_TIMEOUT=0.1 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch codex --role driver --peer claude \
+    --channel codex-output-conflict --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" -- --json 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'runtime output flag is owned by agent-comms'
+  assert_fail test -e "$FIXTURE/conflict-codex.args"
+  raw="$(cat "$COMMS/codex-output-conflict.md")"
+  assert_not_contains "$raw" 'tag=started'
+
+  init_launch_channel missing-output-capability
+  output="$(FAKE_ARGS="$FIXTURE/missing.args" FAKE_STDIN="$FIXTURE/missing.stdin" \
+    FAKE_CLAUDE_HELP='--add-dir --permission-mode -p' PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel missing-output-capability --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'claude adapter is missing --output-format'
+  assert_fail test -e "$FIXTURE/missing.args"
+  raw="$(cat "$COMMS/missing-output-capability.md")"
+  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
+  assert_not_contains "$raw" 'tag=started'
   rm -rf "$FIXTURE"
 }
 
@@ -264,6 +349,7 @@ if [ $# -gt 0 ]; then
   "$1"
 else
   test_launch_adapters
+  test_activity_setup_and_flag_validation
   test_heartbeat_and_lifecycle
   test_heartbeat_requires_open_turn
   test_startup_timeout_is_visible
