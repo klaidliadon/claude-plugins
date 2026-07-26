@@ -8,7 +8,8 @@ use Time::HiRes qw(time sleep);
 use POSIX qw(strftime);
 
 sub fail {
-    die "agent-comms protocol: @_\n";
+    print STDERR "agent-comms protocol: @_\n";
+    exit 1;
 }
 
 sub timestamp {
@@ -104,11 +105,14 @@ sub init_metadata {
         $frame->{kind} eq "control" && $frame->{tag} eq "hello" && $frame->{seq} == 1;
     my %metadata;
     for my $line (split(/\n/, $frame->{block})) {
-        next unless $line =~ /^(driver|peer|release|digest|protocol|release_root)=(.*)$/;
+        next unless $line =~ /^(driver|peer|release|digest|protocol|release_root|progress_frames|progress_bytes|heartbeat_after|heartbeat_interval)=(.*)$/;
         $metadata{$1} = $2;
     }
-    for my $key (qw(driver peer release digest protocol release_root)) {
+    for my $key (qw(driver peer release digest protocol release_root progress_frames progress_bytes heartbeat_after heartbeat_interval)) {
         fail("hello missing $key") unless defined $metadata{$key} && length($metadata{$key});
+    }
+    for my $key (qw(progress_frames progress_bytes heartbeat_after heartbeat_interval)) {
+        fail("hello has invalid $key") unless $metadata{$key} =~ /^\d+$/ && $metadata{$key} > 0;
     }
     fail("hello sender does not match driver") unless $frame->{sender} eq $metadata{driver};
     return \%metadata;
@@ -282,6 +286,7 @@ sub open_locked {
 sub cmd_init {
     my (@argv) = @_;
     my ($file, $session, $driver, $peer, $release, $digest, $protocol, $release_root);
+    my ($progress_frames, $progress_bytes, $heartbeat_after, $heartbeat_interval) = (4, 512, 30, 30);
     GetOptionsFromArray(
         \@argv,
         "file=s" => \$file,
@@ -292,6 +297,10 @@ sub cmd_init {
         "digest=s" => \$digest,
         "protocol=i" => \$protocol,
         "release-root=s" => \$release_root,
+        "progress-frames=i" => \$progress_frames,
+        "progress-bytes=i" => \$progress_bytes,
+        "heartbeat-after=i" => \$heartbeat_after,
+        "heartbeat-interval=i" => \$heartbeat_interval,
     ) or fail("bad init arguments");
     fail("missing init argument") unless
         defined $file && valid_name($session) && valid_name($driver) && valid_name($peer) &&
@@ -299,6 +308,9 @@ sub cmd_init {
     fail("driver and peer must differ") if $driver eq $peer;
     fail("protocol must be 2") unless $protocol == 2;
     fail("bad digest") unless $digest =~ /^[0-9a-f]{64}$/;
+    fail("progress and heartbeat limits must be positive") unless
+        $progress_frames > 0 && $progress_bytes > 0 &&
+        $heartbeat_after > 0 && $heartbeat_interval > 0;
     my ($fh, $existing) = open_locked($file);
     fail("session already exists") if length($existing);
     my $ts = timestamp();
@@ -309,6 +321,10 @@ sub cmd_init {
         "digest=$digest",
         "protocol=$protocol",
         "release_root=$release_root",
+        "progress_frames=$progress_frames",
+        "progress_bytes=$progress_bytes",
+        "heartbeat_after=$heartbeat_after",
+        "heartbeat_interval=$heartbeat_interval",
     );
     my $frame = encode_frame(
         session => $session,
@@ -351,6 +367,18 @@ sub cmd_append {
     my ($frames, $incomplete) = parse_frames($data, 1);
     fail("cannot append after incomplete tail") if $incomplete;
     my $session = state_from_frames($frames);
+    if ($kind eq "message" && $state eq "continue") {
+        fail("progress frame exceeds $session->{progress_bytes} bytes; coalesce progress into the final yielding frame")
+            if length($body) > $session->{progress_bytes};
+        my $progress_count = grep {
+            !$_->{stale} &&
+            $_->{kind} eq "message" &&
+            $_->{turn} == $session->{turn} &&
+            $_->{state} eq "continue"
+        } @$frames;
+        fail("progress frame budget exhausted; coalesce progress into the final yielding frame")
+            if $progress_count >= $session->{progress_frames};
+    }
     my $turn = $kind eq "message" ? $session->{turn} : ($kind eq "status" ? $session->{turn} : 0);
     my $ts = timestamp();
     my $candidate = {
@@ -560,6 +588,36 @@ sub cmd_transcript {
     print $_->{block} for @$frames;
 }
 
+sub cmd_inspect {
+    my (@argv) = @_;
+    my $file;
+    GetOptionsFromArray(\@argv, "file=s" => \$file) or fail("bad inspect arguments");
+    fail("missing --file") unless defined $file;
+    open(my $fh, "<", $file) or fail("open $file: $!");
+    binmode($fh);
+    local $/;
+    my $data = <$fh>;
+    close($fh);
+    my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
+    fail("incomplete channel tail") if $incomplete;
+    my $session = state_from_frames($frames);
+    print "session=$session->{session}\n";
+    print "driver=$session->{driver}\n";
+    print "peer=$session->{peer}\n";
+    print "release=$session->{release}\n";
+    print "digest=$session->{digest}\n";
+    print "protocol=$session->{protocol}\n";
+    print "release_root=$session->{release_root}\n";
+    print "progress_frames=$session->{progress_frames}\n";
+    print "progress_bytes=$session->{progress_bytes}\n";
+    print "heartbeat_after=$session->{heartbeat_after}\n";
+    print "heartbeat_interval=$session->{heartbeat_interval}\n";
+    print "expected=$session->{expected}\n";
+    print "turn=$session->{turn}\n";
+    print "generation.$session->{driver}=$session->{generation}{$session->{driver}}\n";
+    print "generation.$session->{peer}=$session->{generation}{$session->{peer}}\n";
+}
+
 sub cursor_offset {
     my ($path) = @_;
     return 0 unless -f $path;
@@ -647,6 +705,48 @@ sub cmd_recv {
     }
 }
 
+sub cmd_wait_control {
+    my (@argv) = @_;
+    my ($file, $cursor, $me, $tag, $timeout);
+    $timeout = 30;
+    GetOptionsFromArray(
+        \@argv,
+        "file=s" => \$file,
+        "cursor=s" => \$cursor,
+        "me=s" => \$me,
+        "tag=s" => \$tag,
+        "timeout=f" => \$timeout,
+    ) or fail("bad wait-control arguments");
+    fail("missing wait-control argument") unless
+        defined $file && defined $cursor && valid_name($me) && valid_tag($tag);
+    my $offset = cursor_offset($cursor);
+    my $deadline = time() + $timeout;
+    while (1) {
+        open(my $fh, "<", $file) or fail("open $file: $!");
+        binmode($fh);
+        local $/;
+        my $data = <$fh>;
+        close($fh);
+        my ($frames, $incomplete) = parse_frames(defined $data ? $data : "", 1);
+        fail("incomplete channel tail") if $incomplete;
+        state_from_frames($frames);
+        for my $frame (@$frames) {
+            next if $frame->{end} <= $offset;
+            next if $frame->{stale};
+            next if $frame->{sender} eq $me;
+            next unless $frame->{kind} eq "control" && $frame->{tag} eq $tag;
+            write_cursor($cursor, $frame->{end});
+            print $frame->{block};
+            return;
+        }
+        if (time() >= $deadline) {
+            print "__CONTROL_TIMEOUT__ tag=$tag\n";
+            exit 2;
+        }
+        sleep(0.05);
+    }
+}
+
 my $command = shift(@ARGV) // "";
 if ($command eq "init") {
     cmd_init(@ARGV);
@@ -660,8 +760,12 @@ if ($command eq "init") {
     cmd_resume_packet(@ARGV);
 } elsif ($command eq "recv") {
     cmd_recv(@ARGV);
+} elsif ($command eq "wait-control") {
+    cmd_wait_control(@ARGV);
 } elsif ($command eq "transcript") {
     cmd_transcript(@ARGV);
+} elsif ($command eq "inspect") {
+    cmd_inspect(@ARGV);
 } else {
     fail("unknown command '$command'");
 }

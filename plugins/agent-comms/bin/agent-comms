@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-comms — single entrypoint for the 2-party agent review-loop transport.
-# Subcommands: init | ack | send | recv | resume | transcript | path | hash | doctor | install-codex
+# Subcommands: init | ack | send | recv | resume | launch | transcript | path | hash | doctor | install-codex
 set -euo pipefail
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -19,6 +19,8 @@ usage:
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
   agent-comms resume     --channel C --from F --generation N --replace ROLE --body-file F
                                                              (replace the interrupted peer and emit its bounded resume packet)
+  agent-comms launch     <claude|codex> --role <driver|reviewer> --peer NAME --channel C
+                         --generation N --prompt-file F --client-release V [runtime args after --]
   agent-comms transcript --channel C                         (clean chat view)
   agent-comms path       --channel C                         (resolved channel file path)
   agent-comms hash       <file>                              (sha256 of file, for review/approve refs)
@@ -33,6 +35,7 @@ EOF
 
 cmd_init() {
   local CHANNEL="" SESSION="" DRIVER="" PEER="" RELEASE="" DIGEST="" PROTOCOL="" RELEASE_ROOT=""
+  local PROGRESS_FRAMES=4 PROGRESS_BYTES=512 HEARTBEAT_AFTER=30 HEARTBEAT_INTERVAL=30
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel) CHANNEL="$2"; shift 2;;
@@ -43,6 +46,10 @@ cmd_init() {
       --digest) DIGEST="$2"; shift 2;;
       --protocol) PROTOCOL="$2"; shift 2;;
       --release-root) RELEASE_ROOT="$2"; shift 2;;
+      --progress-frames) PROGRESS_FRAMES="$2"; shift 2;;
+      --progress-bytes) PROGRESS_BYTES="$2"; shift 2;;
+      --heartbeat-after) HEARTBEAT_AFTER="$2"; shift 2;;
+      --heartbeat-interval) HEARTBEAT_INTERVAL="$2"; shift 2;;
       *) echo "unknown arg: $1" >&2; exit 64;;
     esac
   done
@@ -61,7 +68,11 @@ cmd_init() {
     --release "$RELEASE" \
     --digest "$DIGEST" \
     --protocol "$PROTOCOL" \
-    --release-root "$RELEASE_ROOT"
+    --release-root "$RELEASE_ROOT" \
+    --progress-frames "$PROGRESS_FRAMES" \
+    --progress-bytes "$PROGRESS_BYTES" \
+    --heartbeat-after "$HEARTBEAT_AFTER" \
+    --heartbeat-interval "$HEARTBEAT_INTERVAL"
 }
 
 cmd_ack() {
@@ -278,6 +289,11 @@ cmd_transcript() {
   done <<< "$idx"
 }
 
+cmd_launch() {
+  COMMS_ROOT_FLAG="$COMMS_ROOT_FLAG" COMMS_DIR_FLAG="$COMMS_DIR_FLAG" \
+    exec bash "$HERE/launch.sh" "$@"
+}
+
 cmd_path() {
   local CHANNEL=""
   while [ $# -gt 0 ]; do case "$1" in --channel) CHANNEL="$2"; shift 2;; *) shift;; esac; done
@@ -383,6 +399,7 @@ case "$cmd" in
   send)          cmd_send "$@";;
   recv)          cmd_recv "$@";;
   resume)        cmd_resume "$@";;
+  launch)        cmd_launch "$@";;
   transcript)    cmd_transcript "$@";;
   path)          cmd_path "$@";;
   hash)          cmd_hash "$@";;

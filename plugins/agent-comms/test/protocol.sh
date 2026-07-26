@@ -265,6 +265,34 @@ test_recover_partial_header_append_only() {
   rm -rf "$FIXTURE"
 }
 
+test_progress_budget() {
+  new_fixture
+  local comms="$FIXTURE/comms"
+  mkdir -p "$comms"
+  dd if=/dev/zero of="$FIXTURE/progress" bs=512 count=1 2>/dev/null
+  dd if=/dev/zero of="$FIXTURE/final-large" bs=1024 count=1 2>/dev/null
+  bash "$AC" init --channel budget --dir "$comms" --session session-1 \
+    --driver codex --peer claude --release 2.0.0 \
+    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --protocol 2 --release-root "$FIXTURE/release" \
+    --progress-frames 4 --progress-bytes 512
+  local index
+  for index in 1 2 3 4; do
+    bash "$AC" send --channel budget --dir "$comms" --from codex --generation 1 \
+      --continue --body-file "$FIXTURE/progress"
+  done
+  local before output
+  before="$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')"
+  output="$(bash "$AC" send --channel budget --dir "$comms" --from codex --generation 1 \
+    --continue --body-file "$FIXTURE/progress" 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'coalesce progress into the final yielding frame'
+  assert_eq "$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')" "$before"
+  assert_ok bash "$AC" send --channel budget --dir "$comms" --from codex --generation 1 \
+    --body-file "$FIXTURE/final-large"
+  rm -rf "$FIXTURE"
+}
+
 if [ $# -gt 0 ]; then
   "$1"
 else
@@ -278,6 +306,7 @@ else
   test_invalid_resume_is_not_appended
   test_recover_partial_body_append_only
   test_recover_partial_header_append_only
+  test_progress_budget
 fi
 
 finish_tests "PROTOCOL"
