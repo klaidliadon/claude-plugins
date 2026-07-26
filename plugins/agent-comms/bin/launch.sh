@@ -279,10 +279,12 @@ case "$HEARTBEAT_INTERVAL" in ''|*[!0-9]*) fail_launch "bad heartbeat interval";
   fail_launch "heartbeat values must be positive"
 if [ "$RUNTIME" = "claude" ]; then
   if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
-    claude -p --permission-mode bypassPermissions --add-dir "$WORK_ROOT" \
+    claude -p --permission-mode bypassPermissions \
+      --add-dir "$WORK_ROOT" --add-dir "$COMMS_DIRECTORY" \
       "${RUNTIME_ARGS[@]}" < "$BOOTSTRAP_FILE" &
   else
-    claude -p --permission-mode bypassPermissions --add-dir "$WORK_ROOT" \
+    claude -p --permission-mode bypassPermissions \
+      --add-dir "$WORK_ROOT" --add-dir "$COMMS_DIRECTORY" \
       < "$BOOTSTRAP_FILE" &
   fi
 else

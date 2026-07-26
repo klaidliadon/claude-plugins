@@ -92,14 +92,16 @@ test_launch_adapters() {
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
     --dir "$COMMS" -- --model gpt-5
 
-  local claude_args codex_args claude_input codex_input
+  local claude_args codex_args claude_input codex_input comms_arg
   claude_args="$(cat "$FIXTURE/claude.args")"
   codex_args="$(cat "$FIXTURE/codex.args")"
   claude_input="$(cat "$FIXTURE/claude.stdin")"
   codex_input="$(cat "$FIXTURE/codex.stdin")"
+  comms_arg="$(cd "$COMMS" && pwd)"
   assert_contains "$claude_args" '-p'
   assert_contains "$claude_args" '--permission-mode'
   assert_contains "$claude_args" '--add-dir'
+  assert_contains "$claude_args" "$comms_arg"
   assert_contains "$claude_args" '--model'
   assert_not_contains "$claude_args" '--channel'
   assert_contains "$codex_args" 'exec'
