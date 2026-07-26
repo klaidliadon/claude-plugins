@@ -255,6 +255,8 @@ render_command RECV_COMMAND "$PINNED_AC" recv --channel "$CHANNEL" --dir "$COMMS
   printf 'Send a progress fragment without yielding:\n\n    %s --continue --body-file <file>\n\n' "$SEND_COMMAND"
   printf 'Send the final fragment and yield (default):\n\n    %s --body-file <file>\n\n' "$SEND_COMMAND"
   printf 'After yielding, receive one complete peer turn:\n\n    %s\n\n' "$RECV_COMMAND"
+  printf 'Run receive synchronously in the foreground immediately after every yielding send.\n'
+  printf 'Never background receive or return a final answer while the channel remains open.\n'
   printf 'Do not send hidden reasoning. Keep progress fragments short and useful.\n'
   if [ "$ROLE" = "reviewer" ] && [ "$GENERATION" -eq 1 ]; then
     printf 'Your first transport action is receive. Do not inspect or start the task before it arrives.\n'

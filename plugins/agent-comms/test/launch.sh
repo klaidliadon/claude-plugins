@@ -113,6 +113,8 @@ test_launch_adapters() {
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms send --channel claude-launch"
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms recv --channel claude-launch"
   assert_contains "$claude_input" 'Your first transport action is receive'
+  assert_contains "$claude_input" 'Run receive synchronously in the foreground'
+  assert_contains "$claude_input" 'Never background receive or return a final answer'
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms send --channel codex-launch"
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms recv --channel codex-launch"
   assert_contains "$codex_input" 'You own the first turn'
