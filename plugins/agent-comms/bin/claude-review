@@ -7,6 +7,8 @@
 # Usage: claude-review --prompt-file <path> [comms handshake flags] [extra claude -p args...]
 set -euo pipefail
 
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 prompt_file=""
 channel=""
 me=""
@@ -42,6 +44,7 @@ if [ -n "$channel" ] && { ! [[ "$channel" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-
   echo "claude-review: invalid channel or reviewer name" >&2
   exit 2
 fi
+"$HERE/agent-comms" doctor --quiet
 
 input_file="$prompt_file"
 if [ -n "$channel" ]; then

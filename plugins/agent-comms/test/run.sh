@@ -9,6 +9,38 @@ assert_fail() { if "$@"; then echo "FAIL: expected fail: $*"; FAILS=$((FAILS+1))
 assert_eq()   { [ "$1" = "$2" ] || { echo "FAIL: '$1' != '$2'"; FAILS=$((FAILS+1)); }; }
 assert_contains(){ case "$1" in *"$2"*) :;; *) echo "FAIL: '$1' lacks '$2'"; FAILS=$((FAILS+1));; esac; }
 
+setup_install_fixture() {
+  local root="$1"
+  FIXTURE_HOME="$root/home"
+  FIXTURE_MARKETPLACE_ROOT="$root/marketplace"
+  FIXTURE_CACHE_BASE="$root/cache"
+  FIXTURE_CODEX_SKILL="$FIXTURE_HOME/.codex/skills/agent-comms"
+  FIXTURE_BIN_DIR="$FIXTURE_HOME/.local/bin"
+  mkdir -p "$FIXTURE_CACHE_BASE" "$(dirname "$FIXTURE_CODEX_SKILL")" "$FIXTURE_BIN_DIR"
+  cp -R "$DIR" "$FIXTURE_MARKETPLACE_ROOT"
+  FIXTURE_VERSION="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$FIXTURE_MARKETPLACE_ROOT/.claude-plugin/plugin.json")"
+  FIXTURE_CACHE_ROOT="$FIXTURE_CACHE_BASE/$FIXTURE_VERSION"
+  cp -R "$FIXTURE_MARKETPLACE_ROOT" "$FIXTURE_CACHE_ROOT"
+  ln -s "$FIXTURE_CACHE_ROOT/skills/agent-comms" "$FIXTURE_CODEX_SKILL"
+  local name
+  for name in agent-comms claude-review codex-review lib.sh; do
+    ln -s "$FIXTURE_CACHE_ROOT/bin/$name" "$FIXTURE_BIN_DIR/$name"
+  done
+}
+
+run_fixture() {
+  HOME="$FIXTURE_HOME" \
+    AGENT_COMMS_MARKETPLACE_ROOT="$FIXTURE_MARKETPLACE_ROOT" \
+    AGENT_COMMS_CACHE_BASE="$FIXTURE_CACHE_BASE" \
+    AGENT_COMMS_CODEX_SKILL="$FIXTURE_CODEX_SKILL" \
+    AGENT_COMMS_BIN_DIR="$FIXTURE_BIN_DIR" \
+    "$@"
+}
+
+run_fixture_doctor() {
+  run_fixture bash "$FIXTURE_CACHE_ROOT/bin/agent-comms" doctor
+}
+
 test_validate_name() {
   assert_ok   valid_name "spec-review"
   assert_ok   valid_name "chan.1"
@@ -172,6 +204,7 @@ test_ack_appends_ready_frame() {
 
 test_claude_review_injects_ack_first_contract() {
   local root; root="${TMPDIR:-/tmp}/acclaudeack.$$"; mkdir -p "$root"
+  setup_install_fixture "$root/install"
   local fakebin="$root/bin"; mkdir -p "$fakebin"
   cat > "$fakebin/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -182,8 +215,9 @@ EOF
   local prompt="$root/prompt.md"; printf 'reviewer instructions' > "$prompt"
 
   local stdin_file="$root/stdin" args_file="$root/args"
-  PATH="$fakebin:$PATH" FAKE_CLAUDE_STDIN="$stdin_file" FAKE_CLAUDE_ARGS="$args_file" \
-    bash "$DIR/bin/claude-review" --prompt-file "$prompt" --channel c1 --me claude --root "$root" --model sonnet
+  run_fixture env PATH="$fakebin:$PATH" \
+    FAKE_CLAUDE_STDIN="$stdin_file" FAKE_CLAUDE_ARGS="$args_file" \
+    bash "$FIXTURE_CACHE_ROOT/bin/claude-review" --prompt-file "$prompt" --channel c1 --me claude --root "$root" --model sonnet
 
   assert_contains "$(cat "$stdin_file")" "reviewer instructions"
   assert_contains "$(cat "$stdin_file")" "Before inspecting the repository or starting the first task"
@@ -196,6 +230,7 @@ EOF
 
 test_claude_review_without_bootstrap_forwards_prompt() {
   local root; root="${TMPDIR:-/tmp}/acclaudeplain.$$"; mkdir -p "$root"
+  setup_install_fixture "$root/install"
   local fakebin="$root/bin"; mkdir -p "$fakebin"
   cat > "$fakebin/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -205,12 +240,271 @@ EOF
   chmod +x "$fakebin/claude"
   local prompt="$root/prompt.md"; printf 'plain reviewer instructions' > "$prompt"
   local stdin_file="$root/stdin" args_file="$root/args"
-  PATH="$fakebin:$PATH" FAKE_CLAUDE_STDIN="$stdin_file" FAKE_CLAUDE_ARGS="$args_file" \
-    bash "$DIR/bin/claude-review" --prompt-file "$prompt" --model haiku
+  run_fixture env PATH="$fakebin:$PATH" \
+    FAKE_CLAUDE_STDIN="$stdin_file" FAKE_CLAUDE_ARGS="$args_file" \
+    bash "$FIXTURE_CACHE_ROOT/bin/claude-review" --prompt-file "$prompt" --model haiku
 
   assert_eq "$(cat "$stdin_file")" "plain reviewer instructions"
   assert_contains "$(cat "$args_file")" "--model"
   assert_contains "$(cat "$args_file")" "haiku"
+  rm -rf "$root"
+}
+
+test_doctor_accepts_identical_release() {
+  local root; root="${TMPDIR:-/tmp}/acdoctorok.$$"
+  setup_install_fixture "$root"
+  local out status
+  out="$(run_fixture_doctor 2>&1)"; status=$?
+  assert_eq "$status" "0"
+  assert_contains "$out" "version: $FIXTURE_VERSION"
+  assert_contains "$out" "installation: consistent"
+  rm -rf "$root"
+}
+
+test_doctor_rejects_same_version_different_bytes() {
+  local root; root="${TMPDIR:-/tmp}/acdoctordigest.$$"
+  setup_install_fixture "$root"
+  printf '\nstale cache\n' >> "$FIXTURE_CACHE_ROOT/skills/agent-comms/SKILL.md"
+  local out status
+  out="$(run_fixture_doctor 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "runtime digest mismatch"
+  assert_contains "$out" "claude plugin update agent-comms@klaidliadon"
+  rm -rf "$root"
+}
+
+test_doctor_rejects_version_mismatch() {
+  local root; root="${TMPDIR:-/tmp}/acdoctorversion.$$"
+  setup_install_fixture "$root"
+  FIXTURE_VERSION="$FIXTURE_VERSION" perl -pi -e 's/"version": "\Q$ENV{FIXTURE_VERSION}\E"/"version": "0.0.0"/' "$FIXTURE_CACHE_ROOT/.claude-plugin/plugin.json"
+  local out status
+  out="$(run_fixture_doctor 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "version mismatch"
+  rm -rf "$root"
+}
+
+test_doctor_rejects_missing_runtime_file() {
+  local root; root="${TMPDIR:-/tmp}/acdoctormissing.$$"
+  setup_install_fixture "$root"
+  rm "$FIXTURE_CACHE_ROOT/bin/codex-review"
+  local out status
+  out="$(run_fixture_doctor 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "missing release file"
+  assert_contains "$out" "claude plugin update agent-comms@klaidliadon"
+  rm -rf "$root"
+}
+
+test_doctor_rejects_missing_cache() {
+  local root; root="${TMPDIR:-/tmp}/acdoctorcache.$$"
+  setup_install_fixture "$root"
+  rm -rf "$FIXTURE_CACHE_ROOT"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" doctor 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "missing Claude cache"
+  assert_contains "$out" "claude plugin update agent-comms@klaidliadon"
+  rm -rf "$root"
+}
+
+test_doctor_rejects_mutable_runtime() {
+  local root; root="${TMPDIR:-/tmp}/acdoctorruntime.$$"
+  setup_install_fixture "$root"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" doctor 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "runtime target mismatch"
+  rm -rf "$root"
+}
+
+test_doctor_rejects_marketplace_backed_codex_links() {
+  local root; root="${TMPDIR:-/tmp}/acdoctorlinks.$$"
+  setup_install_fixture "$root"
+  rm "$FIXTURE_CODEX_SKILL" "$FIXTURE_BIN_DIR/agent-comms"
+  ln -s "$FIXTURE_MARKETPLACE_ROOT/skills/agent-comms" "$FIXTURE_CODEX_SKILL"
+  ln -s "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" "$FIXTURE_BIN_DIR/agent-comms"
+  local out status
+  out="$(run_fixture_doctor 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "Codex skill target mismatch"
+  assert_contains "$out" "command target mismatch"
+  assert_contains "$out" "agent-comms install-codex"
+  rm -rf "$root"
+}
+
+test_install_codex_links_shared_cache() {
+  local root; root="${TMPDIR:-/tmp}/acinstallok.$$"
+  setup_install_fixture "$root"
+  rm "$FIXTURE_CODEX_SKILL"
+  ln -s "$FIXTURE_MARKETPLACE_ROOT/skills/agent-comms" "$FIXTURE_CODEX_SKILL"
+  local name
+  for name in agent-comms claude-review codex-review lib.sh; do
+    rm "$FIXTURE_BIN_DIR/$name"
+    ln -s "$FIXTURE_MARKETPLACE_ROOT/bin/$name" "$FIXTURE_BIN_DIR/$name"
+  done
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "0"
+  assert_eq "$(realpath "$FIXTURE_CODEX_SKILL")" "$(realpath "$FIXTURE_CACHE_ROOT/skills/agent-comms")"
+  for name in agent-comms claude-review codex-review lib.sh; do
+    assert_eq "$(realpath "$FIXTURE_BIN_DIR/$name")" "$(realpath "$FIXTURE_CACHE_ROOT/bin/$name")"
+  done
+  assert_contains "$out" "installation: consistent"
+  rm -rf "$root"
+}
+
+test_install_codex_refuses_mismatched_cache() {
+  local root; root="${TMPDIR:-/tmp}/acinstallbad.$$"
+  setup_install_fixture "$root"
+  printf '\nstale cache\n' >> "$FIXTURE_CACHE_ROOT/skills/agent-comms/SKILL.md"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "runtime digest mismatch"
+  rm -rf "$root"
+}
+
+test_install_codex_refuses_missing_cache() {
+  local root; root="${TMPDIR:-/tmp}/acinstallcache.$$"
+  setup_install_fixture "$root"
+  rm -rf "$FIXTURE_CACHE_ROOT"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "missing Claude cache"
+  assert_contains "$out" "claude plugin update agent-comms@klaidliadon"
+  rm -rf "$root"
+}
+
+test_install_codex_creates_missing_links() {
+  local root; root="${TMPDIR:-/tmp}/acinstallfresh.$$"
+  setup_install_fixture "$root"
+  rm "$FIXTURE_CODEX_SKILL"
+  local name
+  for name in agent-comms claude-review codex-review lib.sh; do
+    rm "$FIXTURE_BIN_DIR/$name"
+  done
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "0"
+  assert_eq "$(realpath "$FIXTURE_CODEX_SKILL")" "$(realpath "$FIXTURE_CACHE_ROOT/skills/agent-comms")"
+  for name in agent-comms claude-review codex-review lib.sh; do
+    assert_eq "$(realpath "$FIXTURE_BIN_DIR/$name")" "$(realpath "$FIXTURE_CACHE_ROOT/bin/$name")"
+  done
+  rm -rf "$root"
+}
+
+test_install_codex_preserves_unrelated_symlink() {
+  local root; root="${TMPDIR:-/tmp}/acinstalllink.$$"
+  setup_install_fixture "$root"
+  local unrelated="$root/unrelated-skill"; mkdir -p "$unrelated"
+  rm "$FIXTURE_CODEX_SKILL"
+  ln -s "$unrelated" "$FIXTURE_CODEX_SKILL"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "refusing unrelated symlink"
+  assert_eq "$(realpath "$FIXTURE_CODEX_SKILL")" "$(realpath "$unrelated")"
+  rm -rf "$root"
+}
+
+test_install_codex_preserves_non_symlink() {
+  local root; root="${TMPDIR:-/tmp}/acinstallfile.$$"
+  setup_install_fixture "$root"
+  rm "$FIXTURE_CODEX_SKILL"
+  printf 'owned by another installer' > "$FIXTURE_CODEX_SKILL"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "refusing non-symlink"
+  assert_eq "$(cat "$FIXTURE_CODEX_SKILL")" "owned by another installer"
+  rm -rf "$root"
+}
+
+test_install_codex_preflights_every_link() {
+  local root; root="${TMPDIR:-/tmp}/acinstallpreflight.$$"
+  setup_install_fixture "$root"
+  rm "$FIXTURE_CODEX_SKILL"
+  ln -s "$FIXTURE_MARKETPLACE_ROOT/skills/agent-comms" "$FIXTURE_CODEX_SKILL"
+  local name
+  for name in agent-comms claude-review codex-review lib.sh; do
+    rm "$FIXTURE_BIN_DIR/$name"
+    ln -s "$FIXTURE_MARKETPLACE_ROOT/bin/$name" "$FIXTURE_BIN_DIR/$name"
+  done
+  local unrelated="$root/unrelated"; printf 'owned by another installer' > "$unrelated"
+  rm "$FIXTURE_BIN_DIR/codex-review"
+  ln -s "$unrelated" "$FIXTURE_BIN_DIR/codex-review"
+  local out status
+  out="$(run_fixture bash "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms" install-codex 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_contains "$out" "refusing unrelated symlink"
+  assert_eq "$(realpath "$FIXTURE_CODEX_SKILL")" "$(realpath "$FIXTURE_MARKETPLACE_ROOT/skills/agent-comms")"
+  assert_eq "$(realpath "$FIXTURE_BIN_DIR/agent-comms")" "$(realpath "$FIXTURE_MARKETPLACE_ROOT/bin/agent-comms")"
+  rm -rf "$root"
+}
+
+test_claude_review_refuses_mismatched_install() {
+  local root; root="${TMPDIR:-/tmp}/acclaudedoc.$$"
+  setup_install_fixture "$root"
+  printf '\nstale cache\n' >> "$FIXTURE_CACHE_ROOT/skills/agent-comms/SKILL.md"
+  local fakebin="$root/fakebin"; mkdir -p "$fakebin"
+  cat > "$fakebin/claude" <<'EOF'
+#!/usr/bin/env bash
+touch "$FAKE_CHILD_MARKER"
+EOF
+  chmod +x "$fakebin/claude"
+  local prompt="$root/prompt.md"; printf 'reviewer instructions' > "$prompt"
+  local marker="$root/spawned" out status
+  out="$(run_fixture env PATH="$fakebin:$PATH" \
+    FAKE_CHILD_MARKER="$marker" \
+    bash "$FIXTURE_CACHE_ROOT/bin/claude-review" --prompt-file "$prompt" 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_fail test -e "$marker"
+  assert_contains "$out" "runtime digest mismatch"
+  rm -rf "$root"
+}
+
+test_codex_review_refuses_mismatched_install() {
+  local root; root="${TMPDIR:-/tmp}/accodexdoc.$$"
+  setup_install_fixture "$root"
+  printf '\nstale cache\n' >> "$FIXTURE_CACHE_ROOT/skills/agent-comms/SKILL.md"
+  local fakebin="$root/fakebin"; mkdir -p "$fakebin"
+  cat > "$fakebin/codex" <<'EOF'
+#!/usr/bin/env bash
+touch "$FAKE_CHILD_MARKER"
+EOF
+  chmod +x "$fakebin/codex"
+  local prompt="$root/prompt.md"; printf 'reviewer instructions' > "$prompt"
+  local marker="$root/spawned" out status
+  out="$(run_fixture env PATH="$fakebin:$PATH" \
+    FAKE_CHILD_MARKER="$marker" \
+    bash "$FIXTURE_CACHE_ROOT/bin/codex-review" --prompt-file "$prompt" 2>&1)"; status=$?
+  assert_eq "$status" "1"
+  assert_fail test -e "$marker"
+  assert_contains "$out" "runtime digest mismatch"
+  rm -rf "$root"
+}
+
+test_codex_review_forwards_prompt_and_args() {
+  local root; root="${TMPDIR:-/tmp}/accodexok.$$"
+  setup_install_fixture "$root"
+  local fakebin="$root/fakebin"; mkdir -p "$fakebin"
+  cat > "$fakebin/codex" <<'EOF'
+#!/usr/bin/env bash
+cat > "$FAKE_CODEX_STDIN"
+printf '%s\n' "$@" > "$FAKE_CODEX_ARGS"
+EOF
+  chmod +x "$fakebin/codex"
+  local prompt="$root/prompt.md"; printf 'reviewer instructions' > "$prompt"
+  local stdin_file="$root/stdin" args_file="$root/args"
+  run_fixture env PATH="$fakebin:$PATH" \
+    FAKE_CODEX_STDIN="$stdin_file" FAKE_CODEX_ARGS="$args_file" \
+    bash "$FIXTURE_CACHE_ROOT/bin/codex-review" --prompt-file "$prompt" --model test-model
+  assert_eq "$(cat "$stdin_file")" "reviewer instructions"
+  assert_contains "$(cat "$args_file")" "--dangerously-bypass-approvals-and-sandbox"
+  assert_contains "$(cat "$args_file")" "--model"
+  assert_contains "$(cat "$args_file")" "test-model"
   rm -rf "$root"
 }
 

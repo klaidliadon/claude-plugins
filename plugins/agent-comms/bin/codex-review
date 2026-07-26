@@ -10,6 +10,8 @@
 # Usage: codex-review --prompt-file <path> [extra codex exec args...]
 set -euo pipefail
 
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 prompt_file=""
 rest=()
 while [ "$#" -gt 0 ]; do
@@ -29,6 +31,7 @@ if [ ! -f "$prompt_file" ]; then
   echo "codex-review: prompt file not found: $prompt_file" >&2
   exit 2
 fi
+"$HERE/agent-comms" doctor --quiet
 
 if [ "${#rest[@]}" -gt 0 ]; then
   exec codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check "${rest[@]}" < "$prompt_file"

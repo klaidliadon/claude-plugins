@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # agent-comms — single entrypoint for the 2-party agent review-loop transport.
-# Subcommands: ack | send | recv | transcript | path | hash | install-codex
+# Subcommands: ack | send | recv | transcript | path | hash | doctor | install-codex
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+AGENT_COMMS_RUNTIME_ROOT="$(cd "$HERE/.." && pwd)"
+export AGENT_COMMS_RUNTIME_ROOT
 source "$HERE/lib.sh"
 
 usage() {
@@ -16,6 +19,7 @@ usage:
   agent-comms transcript --channel C                         (clean chat view)
   agent-comms path       --channel C                         (resolved channel file path)
   agent-comms hash       <file>                              (sha256 of file, for review/approve refs)
+  agent-comms doctor [--quiet]                               (verify one immutable release)
   agent-comms install-codex                                  (link skill into ~/.codex/skills)
 
 global options (any subcommand; precedence --dir > --root > $AGENT_COMMS_ROOT > git root > $PWD):
@@ -166,22 +170,73 @@ cmd_hash() {
   file_sha256 "$f"
 }
 
-cmd_install_codex() {
-  local PLUGIN_ROOT SRC DST cur
-  PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
-  SRC="$PLUGIN_ROOT/skills/agent-comms"
-  DST="$HOME/.codex/skills/agent-comms"
-  mkdir -p "$HOME/.codex/skills"
-  if [ -L "$DST" ]; then
-    cur="$(readlink "$DST")"
-    if [ "$cur" = "$SRC" ]; then echo "already linked"; else echo "refusing: $DST -> $cur (not $SRC)" >&2; exit 1; fi
-  elif [ -e "$DST" ]; then
-    echo "refusing: $DST exists and is not our symlink" >&2; exit 1
-  else
-    ln -s "$SRC" "$DST"; echo "linked $DST -> $SRC"
+cmd_doctor() {
+  local quiet=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --quiet) quiet="--quiet"; shift;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  check_installation "$quiet"
+}
+
+assert_agent_comms_link_owned() {
+  local dst="$1" marketplace="$2" cache_base="$3" cur
+  if [ -L "$dst" ]; then
+    cur="$(resolved_path "$dst" 2>/dev/null || true)"
+    case "$cur/" in
+      "$marketplace/"*|"$cache_base/"*) ;;
+      *) echo "refusing unrelated symlink: $dst -> ${cur:-dangling}" >&2; return 1;;
+    esac
+  elif [ -e "$dst" ]; then
+    echo "refusing non-symlink: $dst" >&2
+    return 1
   fi
-  echo "For Codex, add this plugin's bin to PATH (e.g. in ~/.zshrc):"
-  echo "  export PATH=\"$PLUGIN_ROOT/bin:\$PATH\""
+}
+
+set_agent_comms_link() {
+  local dst="$1" target="$2"
+  mkdir -p "$(dirname "$dst")"
+  ln -sfn "$target" "$dst"
+  echo "linked $dst -> $target"
+}
+
+cmd_install_codex() {
+  local marketplace cache_base cache marketplace_version cache_version
+  local marketplace_digest cache_digest skill bin_dir name
+  marketplace="$(realpath "$(marketplace_plugin_root)")"
+  cache_base="$(realpath "$(claude_cache_base)")"
+  marketplace_version="$(plugin_version "$marketplace")"
+  cache="$cache_base/$marketplace_version"
+  if [ ! -d "$cache" ]; then
+    echo "agent-comms install-codex: missing Claude cache: $cache" >&2
+    echo "repair: claude plugin update agent-comms@klaidliadon" >&2
+    return 1
+  fi
+  cache_version="$(plugin_version "$cache")"
+  if [ "$cache_version" != "$marketplace_version" ]; then
+    echo "agent-comms install-codex: version mismatch: marketplace=$marketplace_version cache=$cache_version" >&2
+    return 1
+  fi
+  marketplace_digest="$(runtime_digest "$marketplace")"
+  cache_digest="$(runtime_digest "$cache")"
+  if [ "$cache_digest" != "$marketplace_digest" ]; then
+    echo "agent-comms install-codex: runtime digest mismatch: marketplace=$marketplace_digest cache=$cache_digest" >&2
+    echo "repair: claude plugin update agent-comms@klaidliadon" >&2
+    return 1
+  fi
+  skill="$(codex_skill_path)"
+  bin_dir="$(agent_comms_bin_dir)"
+  assert_agent_comms_link_owned "$skill" "$marketplace" "$cache_base"
+  for name in agent-comms claude-review codex-review lib.sh; do
+    assert_agent_comms_link_owned "$bin_dir/$name" "$marketplace" "$cache_base"
+  done
+  set_agent_comms_link "$skill" "$cache/skills/agent-comms"
+  for name in agent-comms claude-review codex-review lib.sh; do
+    set_agent_comms_link "$bin_dir/$name" "$cache/bin/$name"
+  done
+  AGENT_COMMS_RUNTIME_ROOT="$cache" bash "$cache/bin/agent-comms" doctor
 }
 
 cmd="${1:-}"; if [ $# -gt 0 ]; then shift; fi
@@ -208,6 +263,7 @@ case "$cmd" in
   transcript)    cmd_transcript "$@";;
   path)          cmd_path "$@";;
   hash)          cmd_hash "$@";;
+  doctor)        cmd_doctor "$@";;
   install-codex) cmd_install_codex "$@";;
   -h|--help|help) usage; exit 0;;
   "") usage; exit 64;;
