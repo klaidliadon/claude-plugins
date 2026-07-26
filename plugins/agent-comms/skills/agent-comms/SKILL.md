@@ -58,9 +58,10 @@ Progress is capped at four 512-byte fragments per turn. Send useful conclusions,
 not tool logs or hidden reasoning.
 
 For multi-phase work, `--continue` is mandatory after each completed major
-phase so the raw tail distinguishes progress from a live-but-stuck process.
-Skip progress frames for short single-phase work; never manufacture updates just
-to consume the budget.
+phase or two minutes, whichever comes first. Never exceed five minutes without
+semantic progress: report the phase, concrete evidence, and next step or
+blocker in at most 256 bytes. Skip progress frames for short single-phase work;
+never manufacture updates just to consume the budget.
 
 Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status
 `open|resolved|contested`. Only unresolved Critical/Important findings block
