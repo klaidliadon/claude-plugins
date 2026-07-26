@@ -255,6 +255,31 @@ test_active_channel_dispatches_to_pinned_release() {
   rm -rf "$FIXTURE"
 }
 
+test_dispatch_ignores_cache_base_override() {
+  setup_installed_fixture
+  local attacker_base="$FIXTURE/attacker-cache"
+  local attacker="$attacker_base/1.2.0"
+  local comms="$FIXTURE/comms"
+  local output
+  mkdir -p "$attacker_base" "$comms"
+  cp -R "$CACHE" "$attacker"
+  perl -pi -e 's/"version": "[^"]+"/"version": "1.2.0"/' \
+    "$attacker/.claude-plugin/plugin.json"
+  bash "$attacker/bin/release.sh" manifest --root "$attacker"
+  AGENT_COMMS_CACHE_BASE="$attacker_base" bash "$attacker/bin/agent-comms" init \
+    --channel hostile --dir "$comms" --session hostile \
+    --driver codex --peer claude >/dev/null 2>&1
+  printf 'attacker dispatched' > "$FIXTURE/task"
+
+  output="$(AGENT_COMMS_CACHE_BASE="$attacker_base" AGENT_COMMS_DISPATCH_TRACE=1 \
+    bash "$CACHE/bin/agent-comms" send --channel hostile --dir "$comms" \
+    --from codex --generation 1 --body-file "$FIXTURE/task" 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'pinned release is outside the trusted cache'
+  assert_not_contains "$(cat "$comms/hostile.md")" 'attacker dispatched'
+  rm -rf "$FIXTURE"
+}
+
 test_v2_release_contract_is_consistent() {
   local plugin skill manifest maintenance launcher cli library
   plugin="$(cat "$DIR/.claude-plugin/plugin.json")"
@@ -291,6 +316,7 @@ else
   test_init_pins_invoked_release_identity
   test_marketplace_runtime_rejects_channel_init
   test_active_channel_dispatches_to_pinned_release
+  test_dispatch_ignores_cache_base_override
   test_v2_release_contract_is_consistent
 fi
 

@@ -357,7 +357,7 @@ case "$cmd" in
         fi
         PIN_ROOT="$(realpath "$PIN_ROOT")"
         if [ "$(realpath "$AGENT_COMMS_RUNTIME_ROOT")" != "$PIN_ROOT" ]; then
-          PIN_CACHE_BASE="$(realpath "$(claude_cache_base)" 2>/dev/null || true)"
+          PIN_CACHE_BASE="$(dirname "$(realpath "$AGENT_COMMS_RUNTIME_ROOT")")"
           if [ -z "$PIN_CACHE_BASE" ] || [ "$PIN_ROOT" != "$PIN_CACHE_BASE/$PIN_RELEASE" ]; then
             echo "pinned release is outside the trusted cache: $PIN_ROOT" >&2
             exit 1
