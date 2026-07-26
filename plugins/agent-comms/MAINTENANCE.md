@@ -1,44 +1,85 @@
-# Maintaining agent-comms
+# Maintaining agent-comms v2
 
-How the two sessions load this plugin, and how to ship a change to both.
+The marketplace repository is canonical source. Claude's selected versioned
+cache is the immutable runtime store. Codex and the public CLI resolve through
+one pointer:
 
-## Canonical source and immutable runtime
+```text
+~/.local/share/agent-comms/current -> ~/.claude/plugins/cache/.../<version>
+~/.local/bin/agent-comms          -> current/bin/agent-comms
+~/.codex/skills/agent-comms       -> current/skills/agent-comms
+```
 
-- The marketplace clone (`~/.claude/plugins/marketplaces/klaidliadon/…`) is the
-  canonical source.
-- Claude Code installs that source into its immutable version-pinned cache
-  (`~/.claude/plugins/cache/klaidliadon/agent-comms/<version>`).
-- `agent-comms install-codex` verifies the cache against the marketplace, then
-  links Codex's skill and stable commands to that exact cache directory.
+`claude-review`, `codex-review`, `install-codex`, and a public `lib.sh` are v1
+artifacts. V2 removes them.
 
-`agent-comms doctor` compares the manifest version, a deterministic runtime
-digest, and every link target. The reviewer wrappers run it before spawning a
-child and refuse a split installation.
+## Install
 
-## Shipping a change
+Bootstrap the marketplace, then run its mutable lifecycle binary:
 
-1. Edit under `plugins/agent-comms/`.
-2. **Bump `version` in `.claude-plugin/plugin.json` on every change. Never
-   reuse a version after any copy has been installed.**
-3. Validate and test before merging:
+```text
+claude plugin marketplace add klaidliadon <repo>
+<marketplace>/plugins/agent-comms/bin/agent-comms install
+```
+
+`install` is idempotent. Under one exclusive update lock it asks Claude to
+install/update the selected plugin, verifies both marketplace and cache
+manifests, runs parser/adapter smoke checks, atomically renames `current`, wires
+the CLI and Codex skill through that pointer, removes owned v1 links, and runs
+`doctor`. Failure restores the old pointer and links.
+
+## Update and diagnose
+
+```text
+agent-comms update --check
+agent-comms update
+agent-comms doctor
+agent-comms doctor --channel C --dir <absolute-channel-dir>
+```
+
+An independent `claude plugin update` may advance Claude without taking the
+agent-comms lock. The next generation-1 launch fails closed because global
+`doctor` compares `claude plugin list --json`, `current`, marketplace bytes,
+the public CLI, and Codex skill. Run `agent-comms install` to reconcile.
+
+Channels pin `release`, `digest`, `protocol`, and an absolute immutable
+`release_root`. Updating `current` changes only new channels. Existing commands
+dispatch to the pinned root; a missing old release is an error, never a fallback
+to `current`. V2 has no pruning command.
+
+## V1 migration
+
+Finish or explicitly stop every v1 channel before installing v2. V1 has no
+release root, checksum, generation fence, or safe resume packet and cannot be
+upgraded in place. Start a new v2 channel after installation.
+
+## Build a release
+
+Every changed bundle gets a new version. Never reuse an installed version.
+
+1. Set the same version in `.claude-plugin/plugin.json`, the literal
+   `--client-release` in `SKILL.md`, and `CLIENT_RELEASE` in `bin/launch.sh`.
+2. Generate and inspect the deterministic manifest:
+
+   ```text
+   agent-comms release manifest
    ```
+
+3. Run:
+
+   ```text
    claude plugin validate plugins/agent-comms
    bash plugins/agent-comms/test/run.sh
    bash plugins/agent-comms/test/e2e.sh
    bash plugins/agent-comms/test/flock-hammer.sh
    ```
-4. Commit, merge, push, then create and push the release tag:
-   ```
-   claude plugin tag plugins/agent-comms --push
-   ```
-5. Refresh and converge both runtimes:
-   ```
-   claude plugin marketplace update klaidliadon
-   claude plugin update agent-comms@klaidliadon
-   agent-comms install-codex
-   agent-comms doctor
-   ```
 
-Stable, non-versioned link paths (`~/.local/bin/{agent-comms,claude-review,codex-review,lib.sh}`,
-`~/.codex/skills/agent-comms`) mean a version bump never breaks the symlinks —
-`install-codex` preflights every target before moving any link to the new cache.
+4. Review the committed implementation through agent-comms in both launch
+   directions with strict cost caps.
+5. On a clean branch, run `agent-comms release check`, then
+   `agent-comms release publish`.
+
+For v2.0.0 the immutable tag is `agent-comms--v2.0.0`. `publish` rechecks the
+bundle, creates and pushes that unmoving tag, refreshes the marketplace,
+performs the normal update transaction, and runs post-activation `doctor`.
+Rollback moves only `current`; a bad published tag is never moved or reused.

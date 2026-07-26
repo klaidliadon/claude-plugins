@@ -1,162 +1,92 @@
 ---
 name: agent-comms
-description: Use when two agent sessions (e.g. Claude as author, Codex as reviewer) need to autonomously iterate on an artifact — passing messages through a shared file, debating findings, and converging without the human relaying between two chats. Trigger when the user says "review this with Codex until you agree", "have the two of you iterate", "join channel X as reviewer", or "agent-comms".
+description: Use when Claude and Codex must autonomously exchange progressive work, review an artifact until agreement, or resume an interrupted two-agent session without a human relaying messages.
 ---
 
-# agent-comms — autonomous 2-party review loop
+# Agent Comms
 
-Two roles share one channel file, driven by a single `agent-comms` command. It
-ships in this plugin's `bin/`, which Claude Code adds to `$PATH` while the plugin
-is enabled — so call it by bare name: `agent-comms <subcommand>`.
+Use one append-only, human-readable channel. `tail -f "$(agent-comms path …)"`
+shows the whole exchange; hidden v2 headers, not visible separators or the word
+`over`, are authoritative.
 
-> **Other hosts (e.g. Codex CLI):** run `agent-comms install-codex` once. It links
-> the skill and stable commands to Claude's immutable versioned cache after
-> verifying that cache matches the canonical marketplace release. After that,
-> the commands below work identically.
+Release literal: `--client-release 2.0.0`. Never derive or change it at runtime.
 
-Before launching either reviewer, run `agent-comms doctor`. Both reviewer
-wrappers enforce this check and refuse startup when the marketplace, Claude
-cache, Codex skill, or command links do not identify the same release. Repair a
-mismatch with `claude plugin update agent-comms@klaidliadon`, then
-`agent-comms install-codex`; do not bypass the check.
+## Start a review
 
-## Spawning the Codex reviewer (author session)
+Pick one absolute `--dir` and pass it on every command.
 
-To launch Codex non-interactively as the reviewer, **always use the `codex-review`
-wrapper** (ships in this plugin's `bin/`):
+1. Create the channel. The invoked immutable release pins its own version,
+   digest, protocol, and root:
 
+   ```text
+   agent-comms init --channel C --session S --driver <me> --peer <peer> --dir D
+   ```
+
+2. Write a reviewer prompt beginning with a concrete one-line title. Launch the
+   peer with the host's background-process facility:
+
+   ```text
+   agent-comms launch <claude|codex> --role reviewer --peer <me> \
+     --channel C --generation 1 --prompt-file P \
+     --client-release 2.0.0 --dir D
+   ```
+
+3. Require the launcher handshake before spending a model turn:
+
+   ```text
+   agent-comms wait-ready --channel C --me <me> --peer <peer> \
+     --generation 1 --dir D
+   ```
+
+4. Send the task with `--review-ref <artifact>`, then call `recv`.
+
+## Walkie-talkie turns
+
+Write each body to a file. A normal `send` ends with the visible
+`---------- <sender> · over ----------` and yields the floor. `--continue`
+emits `----------` and retains it.
+
+```text
+agent-comms send --channel C --from <me> --generation N \
+  [--continue] [--review-ref|--approve-ref <artifact>] --body-file B --dir D
+agent-comms recv --channel C --me <me> --generation N --dir D
 ```
-codex-review --prompt-file <reviewer-prompt.txt>
+
+`recv` returns one completed peer turn, coalescing progressive messages and
+excluding heartbeats/status. Never poll after `--continue`; keep working.
+Progress is capped at four 512-byte fragments per turn. Send useful conclusions,
+not tool logs or hidden reasoning.
+
+Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status
+`open|resolved|contested`. Only unresolved Critical/Important findings block
+approval.
+
+## Resume an interrupted peer
+
+On `__TURN_TIMEOUT__`, stop the old launcher process, write a bounded handoff,
+then fence and replace the current floor holder:
+
+```text
+agent-comms resume --channel C --from <driver> --generation <driver-gen> \
+  --replace <peer> --body-file HANDOFF [--artifact-file ARTIFACT] --dir D
 ```
 
-It feeds the prompt on **stdin** and disables Codex's sandbox.
+Launch the peer again with its incremented generation and the same pinned
+`--client-release 2.0.0`. Pass the current artifact when one exists. The
+launcher verifies its hash and injects the checksummed resume packet; never
+replay the full transcript or fall forward to `current`. Late old-generation
+frames remain visible but are excluded from delivery.
 
-> **⚠️ VERY IMPORTANT — never call `codex exec` directly for this.** `codex exec`
-> reads stdin even when handed a positional prompt, so a backgrounded
-> `codex exec "$(cat prompt.txt)"` hangs forever on `Reading additional input
-> from stdin...` instead of reviewing. And the child must run with its sandbox
-> off, or it can't read the repo / run `agent-comms` (nested-sandbox gotcha —
-> the outer host also sandboxes the child). `codex-review` handles both; raw
-> `codex exec` invites silent stalls.
+## Finish
 
-## Spawning the Claude reviewer (Codex author session)
+- Reviewer: `--approve-ref <artifact>` only for the exact reviewed bytes, then
+  `recv` again.
+- Driver convergence: send `--converged-ref <artifact>` with a body. This is a
+  terminal control and releases the reviewer.
+- Driver stop: send `--tag stopped-reason=impasse|stall|silence|circuit-breaker`.
+- Stop after 25 exchanges, three no-progress exchanges, or two evidence-free
+  rebuttals. Report both positions on impasse.
 
-To launch Claude non-interactively as the reviewer, **always use the
-`claude-review` wrapper** (ships in this plugin's `bin/`):
-
-```
-claude-review --prompt-file <reviewer-prompt.txt> \
-  --channel C --me <reviewer> --root <repo-root>
-```
-
-It feeds the prompt on **stdin**, runs `claude -p`, grants the current working
-directory with `--add-dir`, and uses `--permission-mode bypassPermissions` so a
-background reviewer cannot stall waiting for permission prompts. The wrapper
-injects an ACK-first startup contract with the exact channel commands. Launch it
-before sending the first task, wait for the reviewer's `ready`/`ACK` frame, then
-start the review loop. The prompt file contains persistent reviewer instructions,
-not the first task. Pass normal `claude -p` args after the handshake flags, e.g.
-`--model sonnet --max-budget-usd 1`.
-
-> **⚠️ VERY IMPORTANT — never call raw `claude` for a background reviewer.**
-> Interactive mode waits on a TTY, and even `claude -p` can block on tool
-> permission prompts unless launched with the wrapper's flags.
-
-## Setup
-- Channel `C` and the two participant names are agreed with the human.
-- Both sessions must resolve the same comms dir. Resolution precedence:
-  `--dir DIR` > `--root DIR` > `$AGENT_COMMS_ROOT` > git repo root > `$PWD`.
-  Prefer the **flags** so each command line starts with `agent-comms` (no env
-  prefix → a single permission allowlist rule covers every call):
-  - `--root <abs repo root>` → channel at `<root>/tmp/agent-comms/` (the default).
-  - `--dir <abs dir>` → channel at `<dir>/` exactly (cross-repo / shared dir).
-  Pass the same flag in BOTH sessions and on EVERY call. Verify with
-  `agent-comms path --channel C [--root … | --dir …]` — never `/tmp`.
-- When the reviewed repo is read-only to the child agent, put both the channel
-  and reviewer response-body files under a writable `--dir`; `--add-dir` may
-  grant repository reads without granting scratch writes.
-
-## Commands
-
-**Invoke atomically.** Every call must START with the literal `agent-comms`, as
-its own command — no `H=$(agent-comms …)` capture, no `printf … | agent-comms`
-pipe, no `;`/`&&` chaining. Those break both the `Bash(agent-comms *)` allow rule
-(prefix match) and any compound-command guard. The flags below exist so you never
-need a pipe or a captured hash.
-
-- Send: `agent-comms send --channel C --from <me> [--tag <wire-tag>] [--body-file <f>] [--review-ref|--approve-ref|--converged-ref <artifact>]`
-  - Body: pass `--body-file <f>` (write the body with your editor first). Stdin
-    still works as a fallback, but the pipe form trips the guards above.
-  - Ref tags: `--review-ref/--approve-ref/--converged-ref <artifact>` hash the
-    artifact IN-PROCESS and set the wire tag — no separate `hash` step, no `$()`,
-    and the tag always matches the bytes on disk. The computed `tag=H` is echoed
-    to stderr for audit. Mutually exclusive with `--tag`; use `--tag` for literal
-    tags like `stopped-reason=impasse`.
-- Recv (blocks): `agent-comms recv --channel C --me <me>`
-  - prints peer message(s), or `__TIMEOUT__` (exit 2) if none within the window.
-- ACK: `agent-comms ack --channel C --from <me>` appends the fixed startup frame.
-- Transcript: `agent-comms transcript --channel C`
-- Hash an artifact (manual check / reviewer snapshot): `agent-comms hash <file>` → sha256
-
-Pin `--root <abs repo root>` (or `--dir`) on EVERY call — see Setup; omitting it
-resolves the channel from cwd's git root and silently splits the channel.
-
-## Wire tags (canonical, hyphenated — never a space)
-- `ready` (reviewer startup ACK; driver sends no task before receiving it),
-- `review-ref=H` (driver), `approve-ref=H` (reviewer),
-- `converged-ref=H` (driver-only, terminal, success),
-- `stopped-reason=impasse|stall|silence|circuit-breaker` (driver-only, terminal).
-
-## Findings ledger (in message bodies)
-Each review point: ID (`F1`…), severity (Critical/Important/Suggestion),
-status (open/resolved/contested). Only Critical/Important block convergence.
-Progress = a finding added, resolved, or given materially new evidence.
-
-## Opening title
-Every new review loop's first driver message body and spawned reviewer prompt
-MUST begin with a one-line human-readable task title, for example
-`review analytics plan (PR 1565)`. Use the concrete artifact type and id
-(PR/issue/doc name) so VS Code conversation/session lists are scannable.
-
-## Loop — Driver (author)
-1. Launch the reviewer, then `agent-comms recv` and require its `ready`/`ACK`
-   frame before sending any task. Silence is a failed startup, not a review.
-2. Edit the artifact and write the message body to a file.
-3. `agent-comms send … --review-ref <artifact> --body-file <body>` (the bin hashes
-   the artifact and tags `review-ref`; no manual hash, no `$()`).
-4. `agent-comms recv` and BLOCK.
-5. For each finding: fix (→resolved) or rebut WITH NEW EVIDENCE (→contested);
-   edit the artifact if it changed.
-6. If a terminal condition holds → send the driver-only terminal tag and STOP
-   (terminal sends are exempt from the recv-after-send rule). Else go to 2.
-
-## Loop — Reviewer
-1. Before inspecting the repository or doing task work, send
-   `agent-comms ack --channel C --from <me>`.
-2. `agent-comms recv` and BLOCK for the first task.
-3. Snapshot the artifact and review it.
-4. Raise/update findings, or `agent-comms send … --approve-ref <artifact>` (hashes
-   the snapshot you reviewed and tags `approve-ref`).
-5. `agent-comms recv` and BLOCK. **Two hard rules:**
-   - **Terminal wins:** if a recv batch contains `converged-ref` or
-     `stopped-reason`, EXIT immediately regardless of other frames.
-   - **Timeout means wait:** on `__TIMEOUT__`, call `agent-comms recv` again; do
-     NOT exit. Exit ONLY on a driver terminal message.
-
-## Termination (driver decides, always releases the reviewer)
-- **Converge:** no open/contested Critical/Important AND current artifact hash ==
-  reviewer's last approve-ref → `converged-ref=H`, present result + transcript.
-- **Impasse:** a Critical/Important finding stays contested after two rebuttals
-  with no new evidence → `stopped-reason=impasse`, present BOTH positions to human.
-- **Stall:** 3 exchanges with no progress → `stopped-reason=stall`.
-- **Circuit breaker:** 25 exchanges → `stopped-reason=circuit-breaker`.
-- **Silence:** recv `__TIMEOUT__` after 1–2 retries → `stopped-reason=silence`
-  (sent durably so a late reviewer still exits), then surface to human.
-
-## Hash discipline
-`--review-ref/--approve-ref/--converged-ref` hash the artifact at send time, so a
-ref tag always matches the bytes on disk at that moment. Reviewer approves the
-snapshot it reviewed (send `--approve-ref` right after reviewing, before any edit).
-Driver sends `--converged-ref <artifact>` only when no open/contested
-Critical/Important remain AND the artifact is unchanged since the reviewer's
-approve; if the driver edited after approval, the new hash won't match — keep looping.
+Run `agent-comms doctor` for global drift and
+`agent-comms doctor --channel C --dir D` for pinned-session integrity. Do not
+repair drift by hand; use `agent-comms install`.

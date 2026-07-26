@@ -1,31 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-source "$DIR/bin/lib.sh"
+PROTOCOL="$DIR/bin/protocol.pl"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-flock.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+FILE="$TMP/channel.md"
+N=100
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-FILE="$TMP/chan.md"
-N=2000   # frames per writer
+perl "$PROTOCOL" init --file "$FILE" --session hammer \
+  --driver codex --peer claude --release 2.0.0 \
+  --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  --protocol 2 --release-root "$TMP/release"
+printf 'writer codex' > "$TMP/codex.body"
+printf 'writer claude' > "$TMP/claude.body"
 
-writer() { # writer ID
-  local id="$1" i
-  for ((i=0; i<N; i++)); do
-    printf 'W%s-%06d\n' "$id" "$i" | flock_append "$FILE"
+writer() {
+  local sender="$1" index
+  for ((index=0; index<N; index++)); do
+    perl "$PROTOCOL" append --file "$FILE" --sender "$sender" --generation 1 \
+      --kind status --state none --tag "writer=$sender" --body-file "$TMP/$sender.body"
   done
 }
 
-writer A & p1=$!
-writer B & p2=$!
-# reader starts mid-run, tails to EOF repeatedly
-( for ((k=0;k<50;k++)); do read_from "$FILE" 0 >/dev/null; sleep 0.02; done ) &
-wait $p1 $p2
+writer codex &
+first=$!
+writer claude &
+second=$!
+(
+  for ((index=0; index<50; index++)); do
+    perl "$PROTOCOL" transcript --file "$FILE" >/dev/null
+    sleep 0.02
+  done
+) &
+reader=$!
+wait "$first" "$second" "$reader"
 
-# Assertions
-lines=$(wc -l < "$FILE" | tr -d ' ')
-expect=$((N*2))
-[ "$lines" -eq "$expect" ] || { echo "FAIL: line count $lines != $expect (torn/lost writes)"; exit 1; }
-bad=$(grep -cvE '^W[AB]-[0-9]{6}$' "$FILE" || true)
-[ "$bad" -eq 0 ] || { echo "FAIL: $bad torn/interleaved lines"; exit 1; }
-[ "$(grep -c '^WA-' "$FILE")" -eq "$N" ] || { echo "FAIL: WA count"; exit 1; }
-[ "$(grep -c '^WB-' "$FILE")" -eq "$N" ] || { echo "FAIL: WB count"; exit 1; }
-echo "PASS: $expect intact frames, no interleaving, concurrent reader OK"
+expected=$((N * 2 + 1))
+frames="$(grep -c '^<!-- agent-comms v=2 ' "$FILE")"
+[ "$frames" -eq "$expected" ] || {
+  echo "FAIL: frame count $frames != $expected"
+  exit 1
+}
+metadata="$(perl "$PROTOCOL" inspect --file "$FILE")"
+case "$metadata" in
+  *"seq=$expected"*) ;;
+  *) echo "FAIL: final sequence is not $expected"; exit 1;;
+esac
+echo "PASS: $expected checksummed frames, no torn/interleaved append"

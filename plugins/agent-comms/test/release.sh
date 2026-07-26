@@ -90,6 +90,15 @@ test_manifest_identity() {
   rm -rf "$FIXTURE"
 }
 
+test_manifest_handles_regex_characters_in_root() {
+  new_release_fixture
+  mv "$SOURCE" "$FIXTURE/source[1]"
+  SOURCE="$FIXTURE/source[1]"
+  assert_ok bash "$RELEASE" manifest --root "$SOURCE"
+  assert_ok bash "$RELEASE" verify --root "$SOURCE"
+  rm -rf "$FIXTURE"
+}
+
 test_global_doctor_detects_drift() {
   setup_installed_fixture
   local output
@@ -134,6 +143,13 @@ test_atomic_install_and_rollback() {
   assert_eq "$?" "1"
   assert_eq "$(realpath "$SHARE/current")" "$(realpath "$old")"
 
+  ln -s "$SHARE/current/bin/agent-comms" "$PUBLIC_BIN/claude-review"
+  output="$(AGENT_COMMS_FAILPOINT=activate-current run_installed \
+    bash "$SOURCE/bin/agent-comms" install 2>&1)"
+  assert_eq "$?" "1"
+  assert_eq "$(realpath "$SHARE/current")" "$(realpath "$old")"
+  assert_ok test -L "$PUBLIC_BIN/claude-review"
+
   output="$(AGENT_COMMS_FAILPOINT=after-switch run_installed \
     bash "$SOURCE/bin/agent-comms" install 2>&1)"
   assert_eq "$?" "1"
@@ -151,7 +167,7 @@ test_session_doctor_verifies_pinned_release() {
   local comms="$FIXTURE/comms" digest output
   mkdir -p "$comms"
   digest="$(bash "$CACHE/bin/release.sh" digest --root "$CACHE")"
-  bash "$CACHE/bin/agent-comms" init --channel valid --dir "$comms" --session valid \
+  run_installed bash "$CACHE/bin/agent-comms" init --channel valid --dir "$comms" --session valid \
     --driver codex --peer claude --release "$VERSION" --digest "$digest" \
     --protocol 2 --release-root "$CACHE"
   output="$(run_installed bash "$CACHE/bin/agent-comms" doctor \
@@ -159,7 +175,12 @@ test_session_doctor_verifies_pinned_release() {
   assert_eq "$?" "0"
   assert_contains "$output" 'channel: valid'
 
-  bash "$CACHE/bin/agent-comms" init --channel missing --dir "$comms" --session missing \
+  output="$(run_installed bash "$CACHE/bin/agent-comms" init --channel rejected --dir "$comms" --session rejected \
+    --driver codex --peer claude --release "$VERSION" --digest "$digest" \
+    --protocol 2 --release-root "$FIXTURE/missing-release" 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'explicit release root is missing'
+  perl "$CACHE/bin/protocol.pl" init --file "$comms/missing.md" --session missing \
     --driver codex --peer claude --release "$VERSION" --digest "$digest" \
     --protocol 2 --release-root "$FIXTURE/missing-release"
   output="$(run_installed bash "$CACHE/bin/agent-comms" doctor \
@@ -174,7 +195,7 @@ test_init_pins_invoked_release_identity() {
   setup_installed_fixture
   local comms="$FIXTURE/comms" metadata digest
   mkdir -p "$comms"
-  bash "$CACHE/bin/agent-comms" init --channel automatic --dir "$comms" \
+  run_installed bash "$CACHE/bin/agent-comms" init --channel automatic --dir "$comms" \
     --session automatic --driver codex --peer claude
   metadata="$(perl "$CACHE/bin/protocol.pl" inspect --file "$comms/automatic.md")"
   digest="$(bash "$CACHE/bin/release.sh" digest --root "$CACHE")"
@@ -182,6 +203,18 @@ test_init_pins_invoked_release_identity() {
   assert_contains "$metadata" "digest=$digest"
   assert_contains "$metadata" 'protocol=2'
   assert_contains "$metadata" "release_root=$(realpath "$CACHE")"
+  rm -rf "$FIXTURE"
+}
+
+test_marketplace_runtime_rejects_channel_init() {
+  setup_installed_fixture
+  local output
+  output="$(run_installed bash "$SOURCE/bin/agent-comms" init \
+    --channel mutable --dir "$FIXTURE/comms" --session mutable \
+    --driver codex --peer claude 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'channel commands require an immutable cache release'
+  assert_fail test -e "$FIXTURE/comms/mutable.md"
   rm -rf "$FIXTURE"
 }
 
@@ -193,18 +226,20 @@ test_active_channel_dispatches_to_pinned_release() {
     "$old/.claude-plugin/plugin.json"
   bash "$old/bin/release.sh" manifest --root "$old"
   mkdir -p "$comms"
-  bash "$old/bin/agent-comms" init --channel active --dir "$comms" \
+  run_installed bash "$old/bin/agent-comms" init --channel active --dir "$comms" \
     --session active --driver codex --peer claude >/dev/null 2>&1
   printf 'task' > "$FIXTURE/task"
 
-  output="$(AGENT_COMMS_DISPATCH_TRACE=1 bash "$CACHE/bin/agent-comms" send --channel active --dir "$comms" \
+  output="$(AGENT_COMMS_CACHE_BASE="$FIXTURE/cache" AGENT_COMMS_DISPATCH_TRACE=1 \
+    bash "$CACHE/bin/agent-comms" send --channel active --dir "$comms" \
     --from codex --generation 1 --body-file "$FIXTURE/task" 2>&1)"
   assert_eq "$?" "0"
   assert_contains "$output" "dispatching pinned release: $(realpath "$old")"
   metadata="$(perl "$CACHE/bin/protocol.pl" inspect --file "$comms/active.md")"
   assert_contains "$metadata" "release_root=$(realpath "$old")"
   printf 'resume on the pinned release' > "$FIXTURE/handoff"
-  output="$(AGENT_COMMS_DISPATCH_TRACE=1 bash "$CACHE/bin/agent-comms" resume \
+  output="$(AGENT_COMMS_CACHE_BASE="$FIXTURE/cache" AGENT_COMMS_DISPATCH_TRACE=1 \
+    bash "$CACHE/bin/agent-comms" resume \
     --channel active --dir "$comms" --from codex --generation 1 \
     --replace claude --body-file "$FIXTURE/handoff" 2>&1)"
   assert_eq "$?" "0"
@@ -212,22 +247,51 @@ test_active_channel_dispatches_to_pinned_release() {
   assert_contains "$(cat "$comms/active.md")" 'tag=replace=claude.2'
 
   mv "$old" "$FIXTURE/missing-old"
-  output="$(bash "$CACHE/bin/agent-comms" transcript --channel active --dir "$comms" 2>&1)"
+  output="$(AGENT_COMMS_CACHE_BASE="$FIXTURE/cache" \
+    bash "$CACHE/bin/agent-comms" transcript --channel active --dir "$comms" 2>&1)"
   assert_eq "$?" "1"
   assert_contains "$output" 'pinned release is missing'
   assert_not_contains "$output" 'falling forward'
   rm -rf "$FIXTURE"
 }
 
+test_v2_release_contract_is_consistent() {
+  local plugin skill manifest maintenance launcher cli library
+  plugin="$(cat "$DIR/.claude-plugin/plugin.json")"
+  skill="$(cat "$DIR/skills/agent-comms/SKILL.md")"
+  manifest="$(cat "$DIR/manifest.lock")"
+  maintenance="$(cat "$DIR/MAINTENANCE.md")"
+  launcher="$(cat "$DIR/bin/launch.sh")"
+  cli="$(cat "$DIR/bin/agent-comms")"
+  library="$(cat "$DIR/bin/lib.sh")"
+  assert_contains "$plugin" '"version": "2.0.0"'
+  assert_contains "$manifest" 'release 2.0.0'
+  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.0"'
+  assert_contains "$skill" '--client-release 2.0.0'
+  assert_contains "$maintenance" 'agent-comms--v2.0.0'
+  assert_not_contains "$skill" 'claude-review'
+  assert_not_contains "$skill" 'codex-review'
+  assert_not_contains "$skill" 'install-codex'
+  assert_not_contains "$skill" 'agent-comms ack'
+  assert_not_contains "$cli" 'cmd_ack'
+  assert_not_contains "$cli" 'install-codex'
+  assert_not_contains "$cli" 'v=1'
+  assert_not_contains "$library" 'make_frame'
+  assert_not_contains "$library" 'parse_frames'
+}
+
 if [ $# -gt 0 ]; then
   "$1"
 else
   test_manifest_identity
+  test_manifest_handles_regex_characters_in_root
   test_global_doctor_detects_drift
   test_atomic_install_and_rollback
   test_session_doctor_verifies_pinned_release
   test_init_pins_invoked_release_identity
+  test_marketplace_runtime_rejects_channel_init
   test_active_channel_dispatches_to_pinned_release
+  test_v2_release_contract_is_consistent
 fi
 
 finish_tests "RELEASE"

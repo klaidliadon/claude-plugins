@@ -3,7 +3,6 @@ set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROTOCOL="$DIR/bin/protocol.pl"
-AC="$DIR/bin/agent-comms"
 source "$DIR/test/testlib.sh"
 
 new_fixture() {
@@ -27,7 +26,8 @@ init_fixture() {
 }
 
 prepare_public_release() {
-  PUBLIC_RELEASE="$FIXTURE/release"
+  PUBLIC_RELEASE="$FIXTURE/cache/2.0.0"
+  mkdir -p "$(dirname "$PUBLIC_RELEASE")"
   cp -R "$DIR" "$PUBLIC_RELEASE"
   perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
     "$PUBLIC_RELEASE/.claude-plugin/plugin.json"
@@ -35,6 +35,7 @@ prepare_public_release() {
   PUBLIC_RELEASE="$(realpath "$PUBLIC_RELEASE")"
   PUBLIC_AC="$PUBLIC_RELEASE/bin/agent-comms"
   PUBLIC_DIGEST="$(bash "$PUBLIC_RELEASE/bin/release.sh" digest --root "$PUBLIC_RELEASE")"
+  export AGENT_COMMS_CACHE_BASE="$FIXTURE/cache"
 }
 
 test_frame_roundtrip() {
@@ -108,6 +109,53 @@ test_recv_silence_ignores_old_frames() {
   rm -rf "$FIXTURE"
 }
 
+test_wait_control_requires_declared_sender() {
+  new_fixture
+  init_fixture
+  printf 'ready' > "$FIXTURE/ready"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind control --state none --tag=hello-ack=claude.1 --body-file "$FIXTURE/ready"
+  local output
+  output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
+    --me codex --tag hello-ack=claude.1 --timeout 0.1 2>&1)"
+  assert_eq "$?" "2"
+  assert_contains "$output" '__CONTROL_TIMEOUT__'
+
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind control --state none --tag=hello-ack=claude.1 --body-file "$FIXTURE/ready"
+  output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
+    --me codex --tag hello-ack=claude.1 --timeout 0.1)"
+  assert_contains "$output" 'hello-ack'
+  rm -rf "$FIXTURE"
+}
+
+test_recv_rejects_floor_owner_immediately() {
+  new_fixture
+  init_fixture
+  local output
+  output="$(perl -e 'alarm 2; exec @ARGV' perl "$PROTOCOL" recv \
+    --file "$CHANNEL" --cursor "$CURSOR" --me codex --generation 1 \
+    --silence-seconds 10 --turn-seconds 10 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'owns the floor'
+  rm -rf "$FIXTURE"
+}
+
+test_turn_deadline_survives_recv_restarts() {
+  new_fixture
+  init_fixture
+  printf 'task' > "$FIXTURE/task"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  local output
+  output="$(perl -e 'alarm 2; exec @ARGV' perl "$PROTOCOL" recv \
+    --file "$CHANNEL" --cursor "$CURSOR" --me codex --generation 1 \
+    --silence-seconds 10 --turn-seconds 0 2>&1)"
+  assert_eq "$?" "3"
+  assert_contains "$output" '__TURN_TIMEOUT__'
+  rm -rf "$FIXTURE"
+}
+
 test_public_cli_defaults_to_over() {
   new_fixture
   prepare_public_release
@@ -126,9 +174,15 @@ test_public_cli_defaults_to_over() {
   raw="$(cat "$comms/cli.md")"
   out="$(bash "$PUBLIC_AC" recv --channel cli --dir "$comms" --me claude --generation 1 \
     --silence-seconds 1 --turn-seconds 2)"
+  bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
+    --converged-ref "$FIXTURE/final" --body-file "$FIXTURE/final"
+  raw="$(cat "$comms/cli.md")"
   assert_contains "$raw" 'state=continue'
   assert_contains "$raw" 'state=over'
   assert_contains "$raw" 'tag=review-ref='
+  assert_contains "$raw" 'kind=control'
+  assert_contains "$raw" 'state=terminal'
+  assert_contains "$raw" 'tag=converged-ref='
   assert_contains "$out" 'first body'
   assert_contains "$out" 'final body'
   rm -rf "$FIXTURE"
@@ -142,14 +196,16 @@ test_resume_fences_old_generation() {
   printf 'late stale output' > "$FIXTURE/stale"
   printf 'replacement finished' > "$FIXTURE/replacement"
   printf 'resume the open review from the committed partial result' > "$FIXTURE/handoff"
+  printf 'committed partial artifact' > "$FIXTURE/artifact"
 
   perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
     --kind message --state over --tag=- --body-file "$FIXTURE/task"
   perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
     --kind message --state continue --tag=- --body-file "$FIXTURE/partial"
   perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
-    --replace claude --body-file "$FIXTURE/handoff"
-  local packet
+    --replace claude --body-file "$FIXTURE/handoff" --artifact-file "$FIXTURE/artifact"
+  local artifact_digest packet
+  artifact_digest="$(shasum -a 256 "$FIXTURE/artifact" | awk '{print $1}')"
   packet="$(perl "$PROTOCOL" resume-packet --file "$CHANNEL" --role claude --generation 2)"
   assert_fail perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
     --kind message --state continue --tag=- --body-file "$FIXTURE/stale"
@@ -162,11 +218,51 @@ test_resume_fences_old_generation() {
   transcript="$(perl "$PROTOCOL" transcript --file "$CHANNEL")"
   assert_contains "$packet" 'generation=2'
   assert_contains "$packet" 'open_turn=2'
+  assert_not_contains "$packet" 'task_ref=-'
+  assert_contains "$packet" "artifact_ref=$(realpath "$FIXTURE/artifact")@$artifact_digest"
   assert_contains "$packet" 'resume the open review'
   assert_contains "$out" 'partial from old agent'
   assert_contains "$out" 'replacement finished'
   assert_not_contains "$out" 'late stale output'
   assert_contains "$transcript" 'late stale output'
+  rm -rf "$FIXTURE"
+}
+
+test_resume_rejects_changed_artifact() {
+  new_fixture
+  init_fixture
+  printf 'assigned task' > "$FIXTURE/task"
+  printf 'resume the open review' > "$FIXTURE/handoff"
+  printf 'original artifact' > "$FIXTURE/artifact"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
+    --replace claude --body-file "$FIXTURE/handoff" --artifact-file "$FIXTURE/artifact"
+  printf 'changed artifact' > "$FIXTURE/artifact"
+
+  local output
+  output="$(perl "$PROTOCOL" resume-packet --file "$CHANNEL" --role claude \
+    --generation 2 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'resume packet artifact digest mismatch'
+  rm -rf "$FIXTURE"
+}
+
+test_recv_fences_old_generation() {
+  new_fixture
+  init_fixture
+  printf 'assigned task' > "$FIXTURE/task"
+  printf 'resume the open review' > "$FIXTURE/handoff"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
+    --replace claude --body-file "$FIXTURE/handoff"
+
+  local output
+  output="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me claude \
+    --generation 1 --silence-seconds 0.1 --turn-seconds 1 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'stale receiver generation'
   rm -rf "$FIXTURE"
 }
 
@@ -177,6 +273,7 @@ test_public_resume_command() {
   mkdir -p "$comms"
   printf 'task' > "$FIXTURE/task"
   printf 'handoff' > "$FIXTURE/handoff"
+  printf 'partial artifact' > "$FIXTURE/artifact"
   bash "$PUBLIC_AC" init --channel cli --dir "$comms" --session session-1 \
     --driver codex --peer claude --release 2.0.0 \
     --digest "$PUBLIC_DIGEST" \
@@ -184,10 +281,11 @@ test_public_resume_command() {
   bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
     --body-file "$FIXTURE/task"
   bash "$PUBLIC_AC" resume --channel cli --dir "$comms" --from codex --generation 1 \
-    --replace claude --body-file "$FIXTURE/handoff"
+    --replace claude --body-file "$FIXTURE/handoff" --artifact-file "$FIXTURE/artifact"
   local raw
   raw="$(cat "$comms/cli.md")"
   assert_contains "$raw" 'tag=replace=claude.2'
+  assert_contains "$raw" "artifact_ref=$(realpath "$FIXTURE/artifact")@"
   assert_contains "$raw" 'next_action=handoff'
   assert_eq "$(cat "$comms/.cursors/cli/claude.2")" "$(LC_ALL=C wc -c < "$comms/cli.md" | tr -d ' ')"
   rm -rf "$FIXTURE"
@@ -291,10 +389,11 @@ test_progress_budget() {
     --digest "$PUBLIC_DIGEST" \
     --protocol 2 --release-root "$PUBLIC_RELEASE" \
     --progress-frames 4 --progress-bytes 512
-  local index
-  for index in 1 2 3 4; do
+  local remaining=4
+  while [ "$remaining" -gt 0 ]; do
     bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
       --continue --body-file "$FIXTURE/progress"
+    remaining=$((remaining - 1))
   done
   local before output
   before="$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')"
@@ -333,6 +432,24 @@ EOF
   rm -rf "$FIXTURE"
 }
 
+test_terminal_control_is_delivered_once() {
+  new_fixture
+  init_fixture
+  printf 'review complete' > "$FIXTURE/terminal"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind control --state terminal --tag=converged-ref=abc --body-file "$FIXTURE/terminal"
+  local output
+  output="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me claude \
+    --generation 1 --silence-seconds 0.2 --turn-seconds 1)"
+  assert_contains "$output" 'converged-ref'
+  assert_contains "$output" 'review complete'
+  assert_ok perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind status --state none --tag=exit=0 --body-file "$FIXTURE/final"
+  assert_fail perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/final"
+  rm -rf "$FIXTURE"
+}
+
 if [ $# -gt 0 ]; then
   "$1"
 else
@@ -340,14 +457,20 @@ else
   test_turn_state_machine
   test_recv_coalesces_complete_turn
   test_recv_silence_ignores_old_frames
+  test_wait_control_requires_declared_sender
+  test_recv_rejects_floor_owner_immediately
+  test_turn_deadline_survives_recv_restarts
   test_public_cli_defaults_to_over
   test_resume_fences_old_generation
+  test_resume_rejects_changed_artifact
+  test_recv_fences_old_generation
   test_public_resume_command
   test_invalid_resume_is_not_appended
   test_recover_partial_body_append_only
   test_recover_partial_header_append_only
   test_progress_budget
   test_resume_packet_schema_is_verified
+  test_terminal_control_is_delivered_once
 fi
 
 finish_tests "PROTOCOL"

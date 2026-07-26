@@ -8,7 +8,8 @@ ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-e2e.XXXXXX")"
 COMMS="$ROOT/comms"
 mkdir -p "$COMMS"
 trap 'rm -rf "$ROOT"' EXIT
-RELEASE_ROOT="$ROOT/release"
+RELEASE_ROOT="$ROOT/cache/2.0.0"
+mkdir -p "$(dirname "$RELEASE_ROOT")"
 cp -R "$DIR" "$RELEASE_ROOT"
 perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
   "$RELEASE_ROOT/.claude-plugin/plugin.json"
@@ -16,6 +17,7 @@ bash "$DIR/bin/release.sh" manifest --root "$RELEASE_ROOT"
 RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
 AC="$RELEASE_ROOT/bin/agent-comms"
 RELEASE_DIGEST="$(bash "$RELEASE_ROOT/bin/release.sh" digest --root "$RELEASE_ROOT")"
+export AGENT_COMMS_CACHE_BASE="$ROOT/cache"
 
 printf 'review the implementation' > "$ROOT/task"
 printf 'checked protocol state' > "$ROOT/partial"
@@ -62,5 +64,12 @@ bash "$AC" send --channel review --dir "$COMMS" --from codex --generation 1 \
 approval="$(bash "$AC" recv --channel review --dir "$COMMS" --me claude \
   --generation 2 --silence-seconds 1 --turn-seconds 2)"
 assert_contains "$approval" 'approved'
+
+bash "$AC" send --channel review --dir "$COMMS" --from codex --generation 1 \
+  --converged-ref "$ROOT/task" --body-file "$ROOT/approval"
+terminal="$(bash "$AC" recv --channel review --dir "$COMMS" --me claude \
+  --generation 2 --silence-seconds 1 --turn-seconds 2)"
+assert_contains "$terminal" 'converged-ref'
+assert_contains "$terminal" 'approved'
 
 finish_tests "E2E"

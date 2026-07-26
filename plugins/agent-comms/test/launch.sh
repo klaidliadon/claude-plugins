@@ -10,8 +10,8 @@ new_launch_fixture() {
   FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-launch.XXXXXX")"
   COMMS="$FIXTURE/comms"
   FAKEBIN="$FIXTURE/bin"
-  RELEASE_ROOT="$FIXTURE/release"
-  mkdir -p "$COMMS" "$FAKEBIN"
+  RELEASE_ROOT="$FIXTURE/cache/2.0.0"
+  mkdir -p "$COMMS" "$FAKEBIN" "$(dirname "$RELEASE_ROOT")"
   cp -R "$DIR" "$RELEASE_ROOT"
   RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
   perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
@@ -80,6 +80,8 @@ test_launch_adapters() {
     bash "$AC" launch claude --role reviewer --peer codex --channel claude-launch \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
     --dir "$COMMS" -- --model sonnet
+  assert_ok bash "$AC" wait-ready --channel claude-launch --me codex \
+    --peer claude --generation 1 --timeout 1 --dir "$COMMS"
 
   init_launch_channel codex-launch
   printf 'ready' > "$FIXTURE/ready"
@@ -108,8 +110,10 @@ test_launch_adapters() {
   assert_contains "$claude_input" 'review the current branch'
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms send --channel claude-launch"
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms recv --channel claude-launch"
+  assert_contains "$claude_input" 'Your first transport action is receive'
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms send --channel codex-launch"
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms recv --channel codex-launch"
+  assert_contains "$codex_input" 'You own the first turn'
   rm -rf "$FIXTURE"
 }
 
@@ -154,6 +158,22 @@ test_heartbeat_and_lifecycle() {
   rm -rf "$FIXTURE"
 }
 
+test_heartbeat_requires_open_turn() {
+  new_launch_fixture
+  init_launch_channel waiting --heartbeat-after 1 --heartbeat-interval 1
+  FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" \
+    FAKE_SLEEP=3 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel waiting \
+    --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS"
+
+  local raw
+  raw="$(cat "$COMMS/waiting.md")"
+  assert_not_contains "$raw" 'tag=alive'
+  assert_contains "$raw" 'tag=exit=0'
+  rm -rf "$FIXTURE"
+}
+
 test_startup_timeout_is_visible() {
   new_launch_fixture
   init_launch_channel startup-timeout
@@ -186,6 +206,33 @@ test_launch_rejects_pinned_digest_before_model() {
   rm -rf "$FIXTURE"
 }
 
+test_launch_rejects_changed_resume_artifact_before_ready() {
+  new_launch_fixture
+  init_launch_channel bad-resume
+  printf 'task' > "$FIXTURE/task"
+  printf 'resume the interrupted review' > "$FIXTURE/handoff"
+  printf 'original artifact' > "$FIXTURE/artifact"
+  bash "$AC" send --channel bad-resume --dir "$COMMS" --from codex --generation 1 \
+    --body-file "$FIXTURE/task"
+  bash "$AC" resume --channel bad-resume --dir "$COMMS" --from codex --generation 1 \
+    --replace claude --body-file "$FIXTURE/handoff" --artifact-file "$FIXTURE/artifact"
+  printf 'changed artifact' > "$FIXTURE/artifact"
+
+  local output raw
+  output="$(FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" \
+    PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex --channel bad-resume \
+    --generation 2 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'resume packet artifact digest mismatch'
+  assert_fail test -e "$FIXTURE/claude.args"
+  raw="$(cat "$COMMS/bad-resume.md")"
+  assert_contains "$raw" 'tag=resume-invalid'
+  assert_not_contains "$raw" 'tag=hello-ack=claude.2'
+  rm -rf "$FIXTURE"
+}
+
 test_signal_is_forwarded_and_visible() {
   new_launch_fixture
   init_launch_channel signal
@@ -211,8 +258,10 @@ if [ $# -gt 0 ]; then
 else
   test_launch_adapters
   test_heartbeat_and_lifecycle
+  test_heartbeat_requires_open_turn
   test_startup_timeout_is_visible
   test_launch_rejects_pinned_digest_before_model
+  test_launch_rejects_changed_resume_artifact_before_ready
   test_signal_is_forwarded_and_visible
 fi
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
+use Cwd qw(abs_path);
 use Digest::SHA qw(sha256_hex);
 use Fcntl qw(:flock SEEK_END SEEK_SET);
 use Getopt::Long qw(GetOptionsFromArray);
 use Time::HiRes qw(time sleep);
+use Time::Local qw(timegm);
 use POSIX qw(strftime);
 
 sub fail {
@@ -14,6 +16,14 @@ sub fail {
 
 sub timestamp {
     return strftime("%Y-%m-%dT%H:%M:%SZ", gmtime());
+}
+
+sub timestamp_epoch {
+    my ($value) = @_;
+    my ($year, $month, $day, $hour, $minute, $second) =
+        $value =~ /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
+    fail("invalid frame timestamp: $value") unless defined $second;
+    return timegm($second, $minute, $hour, $day, $month - 1, $year);
 }
 
 sub valid_name {
@@ -201,7 +211,6 @@ sub other_participant {
 
 sub apply_frame {
     my ($session, $frame) = @_;
-    fail("frame after terminal") if $session->{terminal};
     fail("unknown participant $frame->{sender}") unless
         $frame->{sender} eq $session->{driver} || $frame->{sender} eq $session->{peer};
     my $want_generation = $session->{generation}{$frame->{sender}};
@@ -210,6 +219,14 @@ sub apply_frame {
         return;
     }
     fail("future generation") if $frame->{generation} > $want_generation;
+    if ($session->{terminal}) {
+        if ($frame->{kind} eq "status" && $frame->{state} eq "none") {
+            fail("status has invalid turn") unless
+                $frame->{turn} == 0 || $frame->{turn} == $session->{turn};
+            return;
+        }
+        fail("semantic frame after terminal");
+    }
     if ($frame->{kind} eq "message") {
         fail("message requires continue or over") unless
             $frame->{state} eq "continue" || $frame->{state} eq "over";
@@ -404,7 +421,15 @@ sub cmd_append {
 }
 
 sub resume_body {
-    my ($session, $replace, $new_generation, $handoff) = @_;
+    my ($session, $frames, $replace, $new_generation, $handoff, $artifact_file) = @_;
+    my $task = resume_task($session, $frames);
+    my $artifact_ref = "-";
+    if (defined $artifact_file) {
+        my $artifact_path = abs_path($artifact_file);
+        fail("resume artifact is missing: $artifact_file") unless defined $artifact_path;
+        fail("resume artifact path contains a newline") if $artifact_path =~ /\n/;
+        $artifact_ref = "$artifact_path@" . sha256_hex(read_body($artifact_path));
+    }
     my $body = join("\n",
         "session=$session->{session}",
         "role=$replace",
@@ -414,12 +439,23 @@ sub resume_body {
         "digest=$session->{digest}",
         "protocol=$session->{protocol}",
         "release_root=$session->{release_root}",
-        "task_ref=-",
-        "artifact_ref=-",
+        "task_ref=$task->{sha256}",
+        "artifact_ref=$artifact_ref",
         "next_action=$handoff",
     );
     fail("resume packet exceeds 4096 bytes") if length($body) > 4096;
     return $body;
+}
+
+sub resume_task {
+    my ($session, $frames) = @_;
+    my ($task) = reverse grep {
+        !$_->{stale} &&
+        $_->{kind} eq "message" &&
+        $_->{state} eq "over" &&
+        $_->{turn} == $session->{turn} - 1
+    } @$frames;
+    return $task // $frames->[0];
 }
 
 sub validate_resume_actor {
@@ -455,7 +491,14 @@ sub resume_session {
     my $session = state_from_frames($frames);
     validate_resume_actor($session, $args{driver}, $args{generation}, $args{replace});
     my $new_generation = $session->{generation}{$args{replace}} + 1;
-    my $body = resume_body($session, $args{replace}, $new_generation, $handoff);
+    my $body = resume_body(
+        $session,
+        $frames,
+        $args{replace},
+        $new_generation,
+        $handoff,
+        $args{artifact_file},
+    );
     my $suffix = "";
     my $replacement_seq = $session->{seq} + 1;
     my ($damage_type, $damage_id);
@@ -526,7 +569,7 @@ sub resume_session {
 
 sub cmd_resume {
     my ($require_incomplete, @argv) = @_;
-    my ($file, $driver, $generation, $replace, $body_file);
+    my ($file, $driver, $generation, $replace, $body_file, $artifact_file);
     GetOptionsFromArray(
         \@argv,
         "file=s" => \$file,
@@ -534,6 +577,7 @@ sub cmd_resume {
         "generation=i" => \$generation,
         "replace=s" => \$replace,
         "body-file=s" => \$body_file,
+        "artifact-file=s" => \$artifact_file,
     ) or fail("bad resume arguments");
     fail("missing resume argument") unless
         defined $file && valid_name($driver) && defined $generation &&
@@ -544,6 +588,7 @@ sub cmd_resume {
         generation => $generation,
         replace => $replace,
         body_file => $body_file,
+        artifact_file => $artifact_file,
         require_incomplete => $require_incomplete,
     );
 }
@@ -586,9 +631,20 @@ sub cmd_resume_packet {
     fail("resume packet digest mismatch") unless $digest eq $session->{digest};
     fail("resume packet protocol mismatch") unless $protocol == $session->{protocol};
     fail("resume packet release root mismatch") unless $release_root eq $session->{release_root};
-    fail("resume packet task ref is invalid") unless $task_ref eq "-" || $task_ref =~ /^[0-9a-f]{64}$/;
-    fail("resume packet artifact ref is invalid") unless
-        $artifact_ref eq "-" || $artifact_ref =~ /^.+\@[0-9a-f]{64}$/;
+    fail("resume packet task ref is invalid") unless
+        $task_ref =~ /^[0-9a-f]{64}$/ &&
+        resume_task($session, $frames)->{sha256} eq $task_ref;
+    if ($artifact_ref ne "-") {
+        my ($artifact_path, $artifact_digest) =
+            $artifact_ref =~ /\A(.+)\@([0-9a-f]{64})\z/s;
+        fail("resume packet artifact ref is invalid") unless
+            defined $artifact_path && $artifact_path !~ /\n/;
+        my $canonical_artifact = abs_path($artifact_path);
+        fail("resume packet artifact is missing") unless defined $canonical_artifact;
+        fail("resume packet artifact path mismatch") unless $canonical_artifact eq $artifact_path;
+        fail("resume packet artifact digest mismatch") unless
+            sha256_hex(read_body($canonical_artifact)) eq $artifact_digest;
+    }
     fail("resume packet next action is empty") unless length($next_action);
     print "$body\n";
 }
@@ -635,8 +691,10 @@ sub cmd_inspect {
     print "progress_bytes=$session->{progress_bytes}\n";
     print "heartbeat_after=$session->{heartbeat_after}\n";
     print "heartbeat_interval=$session->{heartbeat_interval}\n";
+    print "terminal=" . ($session->{terminal} ? 1 : 0) . "\n";
     print "expected=$session->{expected}\n";
     print "turn=$session->{turn}\n";
+    print "seq=$session->{seq}\n";
     print "generation.$session->{driver}=$session->{generation}{$session->{driver}}\n";
     print "generation.$session->{peer}=$session->{generation}{$session->{peer}}\n";
 }
@@ -691,6 +749,20 @@ sub cmd_recv {
         $data = "" unless defined $data;
         my ($frames) = parse_frames($data, 1);
         my $session = @$frames ? state_from_frames($frames) : undef;
+        if ($session) {
+            fail("stale receiver generation") unless
+                exists $session->{generation}{$me} &&
+                $generation == $session->{generation}{$me};
+            if (!defined $turn_started && !$session->{terminal} && $session->{expected} ne $me) {
+                my ($floor_frame) = reverse grep {
+                    $_->{kind} eq "message" &&
+                    $_->{state} eq "over" &&
+                    $_->{turn} == $session->{turn} - 1
+                } @$frames;
+                $floor_frame = $frames->[0] unless $floor_frame;
+                $turn_started = timestamp_epoch($floor_frame->{ts});
+            }
+        }
         my @after = grep { $_->{end} > $offset } @$frames;
         my $complete_end;
         for my $frame (@after) {
@@ -699,6 +771,11 @@ sub cmd_recv {
             $last_frame = time();
             next if $frame->{stale};
             next if $frame->{sender} eq $me;
+            if ($frame->{kind} eq "control" && $frame->{state} eq "terminal") {
+                push @semantic, $frame;
+                $complete_end = $frame->{end};
+                last;
+            }
             next if $frame->{kind} ne "message";
             $turn_started //= time();
             push @semantic, $frame;
@@ -712,7 +789,7 @@ sub cmd_recv {
             print $_->{block} for @semantic;
             return;
         }
-        if (!@semantic && $session && $session->{expected} eq $me && $offset >= length($data)) {
+        if (!@semantic && $session && !$session->{terminal} && $session->{expected} eq $me) {
             fail("$me owns the floor and must send before recv");
         }
         my $now = time();

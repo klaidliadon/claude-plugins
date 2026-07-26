@@ -19,14 +19,17 @@ manifest_to() {
   root="$(realpath "$root")"
   version="$(plugin_version "$root")"
   paths="$(mktemp "${TMPDIR:-/tmp}/agent-comms-manifest-paths.XXXXXX")"
-  find "$root" -type f ! -path "$root/manifest.lock" -print |
-    sed "s#^$root/##" |
+  find "$root" -type f -print |
+    perl -MFile::Spec -pe \
+      'BEGIN { $root = shift @ARGV } chomp; $_ = File::Spec->abs2rel($_, $root) . "\n"' \
+      "$root" |
     LC_ALL=C sort > "$paths"
   {
     printf 'protocol 2\n'
     printf 'release %s\n' "$version"
     while IFS= read -r rel; do
       [ -n "$rel" ] || continue
+      [ "$rel" != "manifest.lock" ] || continue
       case "$rel" in /*|../*|*/../*) fail_release "unsafe manifest path: $rel";; esac
       printf '%s %s %s\n' "$(file_mode "$root/$rel")" "$(file_sha256 "$root/$rel")" "$rel"
     done < "$paths"
@@ -233,8 +236,8 @@ owned_link() {
   case "$resolved/" in
     "$share/"*|"$marketplace/"*|"$cache/"*) return 0;;
   esac
-  case "$target" in
-    *agent-comms*) return 0;;
+  case "$target/" in
+    "$share/"*|"$marketplace/"*|"$cache/"*) return 0;;
   esac
   return 1
 }
@@ -263,6 +266,10 @@ restore_link() {
 
 activate_current() {
   local share="$1" selected_path="$2" temporary relative
+  if [ "${AGENT_COMMS_FAILPOINT:-}" = "activate-current" ]; then
+    echo "agent-comms release: injected current activation failure" >&2
+    return 1
+  fi
   share="$(realpath "$share")"
   temporary="$share/current.new.$$"
   relative="$(perl -MFile::Spec -e 'print File::Spec->abs2rel($ARGV[0], $ARGV[1])' \
@@ -320,6 +327,32 @@ discard_removed_command_backups() {
   done
 }
 
+INSTALL_ROLLBACK_ACTIVE=0
+INSTALL_SHARE=""
+INSTALL_CURRENT_TARGET=""
+INSTALL_CLI=""
+INSTALL_CLI_TARGET=""
+INSTALL_SKILL=""
+INSTALL_SKILL_TARGET=""
+INSTALL_PENDING_RECEIPT=""
+
+rollback_install() {
+  local status=$? failed=0
+  [ "$INSTALL_ROLLBACK_ACTIVE" -eq 1 ] || return "$status"
+  set +e
+  restore_current "$INSTALL_SHARE" "$INSTALL_CURRENT_TARGET" || failed=1
+  restore_link "$INSTALL_CLI" "$INSTALL_CLI_TARGET" || failed=1
+  restore_link "$INSTALL_SKILL" "$INSTALL_SKILL_TARGET" || failed=1
+  restore_removed_commands || failed=1
+  if [ -n "$INSTALL_PENDING_RECEIPT" ]; then
+    rm -f "$INSTALL_PENDING_RECEIPT" || failed=1
+  fi
+  if [ "$failed" -ne 0 ]; then
+    echo "agent-comms release: rollback failed; inspect $INSTALL_SHARE" >&2
+  fi
+  return "$status"
+}
+
 install_locked() {
   local marketplace share selected version selected_path marketplace_version selected_version
   local marketplace_digest selected_digest current old_target="" cli skill name commit receipt pending_receipt
@@ -362,41 +395,37 @@ install_locked() {
   for name in claude-review codex-review lib.sh; do
     preflight_destination "$(public_bin)/$name"
   done
-  stage_removed_commands
-  if [ "${AGENT_COMMS_FAILPOINT:-}" = "before-switch" ]; then
-    restore_removed_commands
-    fail_release "injected failure before current switch"
-  fi
   if [ -L "$current" ]; then old_target="$(readlink "$current")"; fi
   if [ -L "$cli" ]; then old_cli_target="$(readlink "$cli")"; fi
   if [ -L "$skill" ]; then old_skill_target="$(readlink "$skill")"; fi
+  INSTALL_SHARE="$share"
+  INSTALL_CURRENT_TARGET="$old_target"
+  INSTALL_CLI="$cli"
+  INSTALL_CLI_TARGET="$old_cli_target"
+  INSTALL_SKILL="$skill"
+  INSTALL_SKILL_TARGET="$old_skill_target"
+  INSTALL_ROLLBACK_ACTIVE=1
+  trap rollback_install EXIT
+  stage_removed_commands
+  if [ "${AGENT_COMMS_FAILPOINT:-}" = "before-switch" ]; then
+    fail_release "injected failure before current switch"
+  fi
   activate_current "$share" "$selected_path"
   if ! set_link "$cli" "$share/current/bin/agent-comms" ||
      ! set_link "$skill" "$share/current/skills/agent-comms"; then
-    restore_current "$share" "$old_target"
-    restore_link "$cli" "$old_cli_target"
-    restore_link "$skill" "$old_skill_target"
-    restore_removed_commands
-    fail_release "stable link activation failed; restored previous release"
+    fail_release "stable link activation failed"
   fi
   if [ "${AGENT_COMMS_FAILPOINT:-}" = "after-switch" ]; then
-    restore_current "$share" "$old_target"
-    restore_link "$cli" "$old_cli_target"
-    restore_link "$skill" "$old_skill_target"
-    restore_removed_commands
-    fail_release "injected failure after current switch; restored previous release"
+    fail_release "injected failure after current switch"
   fi
   if ! doctor_global; then
-    restore_current "$share" "$old_target"
-    restore_link "$cli" "$old_cli_target"
-    restore_link "$skill" "$old_skill_target"
-    restore_removed_commands
-    fail_release "post-switch doctor failed; restored previous release"
+    fail_release "post-switch doctor failed"
   fi
   mkdir -p "$share/receipts"
   commit="$(git -C "$marketplace" rev-parse HEAD 2>/dev/null || printf unknown)"
   receipt="$share/receipts/$version"
   pending_receipt="$receipt.pending.$$"
+  INSTALL_PENDING_RECEIPT="$pending_receipt"
   {
     printf 'version=%s\n' "$version"
     printf 'digest=%s\n' "$selected_digest"
@@ -406,13 +435,12 @@ install_locked() {
     printf 'installed_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$pending_receipt"
   if ! mv "$pending_receipt" "$receipt"; then
-    restore_current "$share" "$old_target"
-    restore_link "$cli" "$old_cli_target"
-    restore_link "$skill" "$old_skill_target"
-    restore_removed_commands
-    fail_release "receipt activation failed; restored previous release"
+    fail_release "receipt activation failed"
   fi
+  INSTALL_PENDING_RECEIPT=""
   discard_removed_command_backups
+  INSTALL_ROLLBACK_ACTIVE=0
+  trap - EXIT
 }
 
 with_update_lock() {
@@ -427,6 +455,20 @@ with_update_lock() {
     my $status = system @ARGV;
     exit($status == -1 ? 127 : $status >> 8);
   ' "$lock" bash "$SCRIPT_PATH" _install
+}
+
+with_doctor_lock() {
+  local share lock
+  share="$(share_root)"
+  mkdir -p "$share"
+  lock="$share/update.lock"
+  perl -e '
+    use Fcntl qw(:flock);
+    open(my $lock, ">>", shift @ARGV) or die "open update lock: $!\n";
+    flock($lock, LOCK_SH) or die "lock update: $!\n";
+    my $status = system @ARGV;
+    exit($status == -1 ? 127 : $status >> 8);
+  ' "$lock" bash "$SCRIPT_PATH" doctor "$@"
 }
 
 check_update() {
@@ -451,6 +493,62 @@ check_update() {
   echo "up to date: $version $selected_digest"
 }
 
+release_consistency() {
+  local root="$1" version skill_release launcher_release manifest_release
+  version="$(plugin_version "$root")"
+  skill_release="$(sed -n 's/.*--client-release \([0-9][0-9.]*\).*/\1/p' \
+    "$root/skills/agent-comms/SKILL.md" | head -1)"
+  launcher_release="$(sed -n 's/^CLIENT_RELEASE="\([^"]*\)"/\1/p' "$root/bin/launch.sh")"
+  manifest_release="$(sed -n 's/^release //p' "$root/manifest.lock")"
+  [ "$version" = "$skill_release" ] ||
+    fail_release "skill release mismatch: $skill_release != $version"
+  [ "$version" = "$launcher_release" ] ||
+    fail_release "launcher release mismatch: $launcher_release != $version"
+  [ "$version" = "$manifest_release" ] ||
+    fail_release "manifest release mismatch: $manifest_release != $version"
+}
+
+release_check() {
+  local root repo relative version tag dirty temporary
+  root="$(cd "$HERE/.." && pwd)"
+  manifest_verify "$root"
+  release_consistency "$root"
+  repo="$(git -C "$root" rev-parse --show-toplevel)"
+  relative="$(perl -MFile::Spec -e 'print File::Spec->abs2rel($ARGV[0], $ARGV[1])' "$root" "$repo")"
+  dirty="$(git -C "$repo" status --porcelain -- "$relative")"
+  [ -z "$dirty" ] || fail_release "release source is dirty"
+  version="$(plugin_version "$root")"
+  tag="agent-comms--v$version"
+  [ -z "$(git -C "$repo" tag -l "$tag")" ] || fail_release "release tag already exists: $tag"
+  claude plugin validate "$root"
+  bash "$root/test/run.sh"
+  bash "$root/test/e2e.sh"
+  bash "$root/test/flock-hammer.sh"
+  temporary="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-release-check.XXXXXX")"
+  cp -R "$root" "$temporary/release"
+  if ! manifest_verify "$temporary/release"; then
+    echo "agent-comms release: quarantined failed test release: $temporary" >&2
+    return 1
+  fi
+  rm -rf "$temporary"
+  echo "release check: $tag ready"
+}
+
+release_publish() {
+  local root repo version tag
+  release_check
+  root="$(cd "$HERE/.." && pwd)"
+  repo="$(git -C "$root" rev-parse --show-toplevel)"
+  version="$(plugin_version "$root")"
+  tag="agent-comms--v$version"
+  git -C "$repo" tag "$tag"
+  git -C "$repo" push origin "$tag"
+  claude plugin marketplace update klaidliadon
+  with_update_lock
+  doctor_global
+  echo "published: $tag"
+}
+
 command="${1:-}"
 [ $# -eq 0 ] || shift
 case "$command" in
@@ -469,8 +567,19 @@ case "$command" in
     manifest_verify "$ROOT"
     file_sha256 "$ROOT/manifest.lock"
     ;;
+  check)
+    [ $# -eq 0 ] || fail_release "release check takes no arguments"
+    release_check
+    ;;
+  publish)
+    [ $# -eq 0 ] || fail_release "release publish takes no arguments"
+    release_publish
+    ;;
   doctor)
     doctor_global "$@"
+    ;;
+  doctor-locked)
+    with_doctor_lock "$@"
     ;;
   install)
     with_update_lock

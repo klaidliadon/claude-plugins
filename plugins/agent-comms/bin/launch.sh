@@ -42,7 +42,7 @@ append_lifecycle() {
 
 heartbeat_loop() {
   local child_pid="$1" after="$2" interval="$3"
-  local last_size quiet_since last_heartbeat current_size now elapsed
+  local last_size quiet_since last_heartbeat current_size now elapsed state
   last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
   quiet_since="$(date +%s)"
   last_heartbeat="$quiet_since"
@@ -63,6 +63,11 @@ heartbeat_loop() {
     if [ $((now - last_heartbeat)) -lt "$interval" ]; then
       continue
     fi
+    state="$(perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE")" || break
+    case "$state" in
+      *$'terminal=0\n'*$'expected='"$ME"$'\n'*) ;;
+      *) continue;;
+    esac
     append_lifecycle alive "elapsed=${elapsed}s"
     last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
     last_heartbeat="$now"
@@ -112,10 +117,14 @@ assert_confined "$CHANNEL_FILE"
 METADATA_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-metadata.XXXXXX")"
 BOOTSTRAP_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-prompt.XXXXXX")"
 CONTROL_CURSOR="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-control.XXXXXX")"
+RESUME_PACKET_FILE=""
 CHILD_PID=""
 HEARTBEAT_PID=""
 cleanup_launch() {
   rm -f "$METADATA_FILE" "$BOOTSTRAP_FILE" "$CONTROL_CURSOR"
+  if [ -n "$RESUME_PACKET_FILE" ]; then
+    rm -f "$RESUME_PACKET_FILE"
+  fi
 }
 handle_signal() {
   local signal="$1" status="$2"
@@ -172,7 +181,7 @@ ACTUAL_DIGEST="$(file_sha256 "$RELEASE_ROOT/manifest.lock")"
 [ "$(plugin_version "$RELEASE_ROOT")" = "$SESSION_RELEASE" ] ||
   fail_launch "session version does not match pinned release"
 if [ "$GENERATION" -eq 1 ]; then
-  bash "$RELEASE_ROOT/bin/release.sh" doctor --quiet ||
+  bash "$RELEASE_ROOT/bin/release.sh" doctor-locked --quiet ||
     fail_launch "global installation drift detected"
 fi
 
@@ -184,6 +193,19 @@ else
   case "$ADAPTER_HELP" in *--dangerously-bypass-approvals-and-sandbox*--skip-git-repo-check*) ;;
     *) fail_launch "codex adapter flags are unsupported";;
   esac
+fi
+
+if [ "$GENERATION" -gt 1 ]; then
+  RESUME_PACKET_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-resume.XXXXXX")"
+  if perl "$HERE/protocol.pl" resume-packet \
+      --file "$CHANNEL_FILE" --role "$ME" --generation "$GENERATION" \
+      > "$RESUME_PACKET_FILE"; then
+    :
+  else
+    resume_status=$?
+    append_lifecycle resume-invalid "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
+    exit "$resume_status"
+  fi
 fi
 
 if [ "$ROLE" = "reviewer" ]; then
@@ -229,10 +251,16 @@ render_command RECV_COMMAND "$PINNED_AC" recv --channel "$CHANNEL" --dir "$COMMS
   printf 'Send the final fragment and yield (default):\n\n    %s --body-file <file>\n\n' "$SEND_COMMAND"
   printf 'After yielding, receive one complete peer turn:\n\n    %s\n\n' "$RECV_COMMAND"
   printf 'Do not send hidden reasoning. Keep progress fragments short and useful.\n'
+  if [ "$ROLE" = "reviewer" ] && [ "$GENERATION" -eq 1 ]; then
+    printf 'Your first transport action is receive. Do not inspect or start the task before it arrives.\n'
+  elif [ "$ROLE" = "reviewer" ]; then
+    printf 'Resume the open turn from the packet below; do not receive first.\n'
+  else
+    printf 'You own the first turn. Send the task before receiving.\n'
+  fi
   if [ "$GENERATION" -gt 1 ]; then
     printf '\n## Resume packet\n\n'
-    perl "$HERE/protocol.pl" resume-packet \
-      --file "$CHANNEL_FILE" --role "$ME" --generation "$GENERATION"
+    cat "$RESUME_PACKET_FILE"
   fi
 } > "$BOOTSTRAP_FILE"
 
