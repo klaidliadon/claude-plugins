@@ -8,10 +8,10 @@ ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-e2e.XXXXXX")"
 COMMS="$ROOT/comms"
 mkdir -p "$COMMS"
 trap 'rm -rf "$ROOT"' EXIT
-RELEASE_ROOT="$ROOT/cache/2.0.0"
+RELEASE_ROOT="$ROOT/cache/2.0.1"
 mkdir -p "$(dirname "$RELEASE_ROOT")"
 cp -R "$DIR" "$RELEASE_ROOT"
-perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
+perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.1"/' \
   "$RELEASE_ROOT/.claude-plugin/plugin.json"
 bash "$DIR/bin/release.sh" manifest --root "$RELEASE_ROOT"
 RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
@@ -28,7 +28,7 @@ printf 'no important findings' > "$ROOT/replacement-final"
 printf 'approved' > "$ROOT/approval"
 
 bash "$AC" init --channel review --dir "$COMMS" --session e2e \
-  --driver codex --peer claude --release 2.0.0 \
+  --driver codex --peer claude --release 2.0.1 \
   --digest "$RELEASE_DIGEST" \
   --protocol 2 --release-root "$RELEASE_ROOT"
 bash "$AC" send --channel review --dir "$COMMS" --from codex --generation 1 \

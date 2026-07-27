@@ -99,6 +99,21 @@ test_manifest_handles_regex_characters_in_root() {
   rm -rf "$FIXTURE"
 }
 
+test_manifest_ignores_claude_runtime_metadata() {
+  new_release_fixture
+  mv "$SOURCE" "$FIXTURE/source[1]"
+  SOURCE="$FIXTURE/source[1]"
+  bash "$RELEASE" manifest --root "$SOURCE"
+  mkdir -p "$SOURCE/.in_use"
+  printf 'runtime-owned marker' > "$SOURCE/.in_use/1234"
+
+  assert_ok bash "$RELEASE" verify --root "$SOURCE"
+  assert_not_contains "$(cat "$SOURCE/manifest.lock")" '.in_use'
+  printf '\nchanged\n' >> "$SOURCE/bin/agent-comms"
+  assert_fail bash "$RELEASE" verify --root "$SOURCE"
+  rm -rf "$FIXTURE"
+}
+
 test_global_doctor_detects_drift() {
   setup_installed_fixture
   local output
@@ -289,11 +304,11 @@ test_v2_release_contract_is_consistent() {
   launcher="$(cat "$DIR/bin/launch.sh")"
   cli="$(cat "$DIR/bin/agent-comms")"
   library="$(cat "$DIR/bin/lib.sh")"
-  assert_contains "$plugin" '"version": "2.0.0"'
-  assert_contains "$manifest" 'release 2.0.0'
-  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.0"'
-  assert_contains "$skill" '--client-release 2.0.0'
-  assert_contains "$maintenance" 'agent-comms--v2.0.0'
+  assert_contains "$plugin" '"version": "2.0.1"'
+  assert_contains "$manifest" 'release 2.0.1'
+  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.1"'
+  assert_contains "$skill" '--client-release 2.0.1'
+  assert_contains "$maintenance" 'agent-comms--v2.0.1'
   assert_not_contains "$skill" 'claude-review'
   assert_not_contains "$skill" 'codex-review'
   assert_not_contains "$skill" 'install-codex'
@@ -310,6 +325,7 @@ if [ $# -gt 0 ]; then
 else
   test_manifest_identity
   test_manifest_handles_regex_characters_in_root
+  test_manifest_ignores_claude_runtime_metadata
   test_global_doctor_detects_drift
   test_atomic_install_and_rollback
   test_session_doctor_verifies_pinned_release
