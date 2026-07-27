@@ -1,53 +1,17 @@
 #!/usr/bin/env bash
-# bin/lib.sh — agent-comms shared helpers (Task 0 subset; extended in later tasks)
 
-# flock_append FILE  — append stdin to FILE atomically under an exclusive lock.
-flock_append() {
-  local file="$1"
-  perl -e '
-    use Fcntl qw(:flock SEEK_END);
-    open(my $fh, ">>", $ARGV[0]) or die "open: $!";
-    flock($fh, LOCK_EX)         or die "flock: $!";
-    seek($fh, 0, SEEK_END)      or die "seek: $!";
-    local $/; my $data = <STDIN>;
-    print {$fh} $data if defined $data;
-    close($fh)                  or die "close: $!";
-  ' "$file"
-}
-
-# read_from FILE OFFSET — print bytes from OFFSET..EOF under a shared lock.
-read_from() {
-  local file="$1" off="$2"
-  [ -e "$file" ] || return 0
-  perl -e '
-    use Fcntl qw(:flock SEEK_SET);
-    open(my $fh, "<", $ARGV[0]) or exit 0;
-    binmode($fh);
-    flock($fh, LOCK_SH)         or die "flock: $!";
-    seek($fh, $ARGV[1], SEEK_SET) or die "seek: $!";
-    local $/; my $d = <$fh>;
-    binmode(STDOUT); print $d if defined $d;
-    close($fh);
-  ' "$file" "$off"
-}
-
-# --- validation ---
-# valid_name NAME — channel/agent slug; forbids bare . or .. segments, slashes, spaces.
 valid_name() {
   [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9][A-Za-z0-9_-]*)*$ ]]
 }
 
-# valid_tag TAG — frame-safe control tag.
 valid_tag() {
   [[ "$1" =~ ^[A-Za-z0-9._=-]+$ ]]
 }
 
-# file_sha256 FILE — print the sha256 hex digest of FILE (no filename).
 file_sha256() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
-# --- release identity ---
 plugin_version() {
   local root="$1" manifest version
   manifest="$root/.claude-plugin/plugin.json"
@@ -63,35 +27,6 @@ plugin_version() {
   printf '%s\n' "$version"
 }
 
-runtime_digest() {
-  local root="$1" rel
-  for rel in \
-    .claude-plugin/plugin.json \
-    skills/agent-comms/SKILL.md \
-    bin/agent-comms \
-    bin/lib.sh \
-    bin/claude-review \
-    bin/codex-review
-  do
-    if [ ! -f "$root/$rel" ]; then
-      echo "missing release file: $root/$rel" >&2
-      return 1
-    fi
-  done
-  {
-    for rel in \
-      .claude-plugin/plugin.json \
-      skills/agent-comms/SKILL.md \
-      bin/agent-comms \
-      bin/lib.sh \
-      bin/claude-review \
-      bin/codex-review
-    do
-      printf '%s  %s\n' "$(file_sha256 "$root/$rel")" "$rel"
-    done
-  } | shasum -a 256 | awk '{print $1}'
-}
-
 marketplace_plugin_root() {
   printf '%s\n' "${AGENT_COMMS_MARKETPLACE_ROOT:-$HOME/.claude/plugins/marketplaces/klaidliadon/plugins/agent-comms}"
 }
@@ -100,182 +35,61 @@ claude_cache_base() {
   printf '%s\n' "${AGENT_COMMS_CACHE_BASE:-$HOME/.claude/plugins/cache/klaidliadon/agent-comms}"
 }
 
-codex_skill_path() {
-  printf '%s\n' "${AGENT_COMMS_CODEX_SKILL:-$HOME/.codex/skills/agent-comms}"
-}
-
-agent_comms_bin_dir() {
-  printf '%s\n' "${AGENT_COMMS_BIN_DIR:-$HOME/.local/bin}"
-}
-
 resolved_path() {
   local path="$1"
-  if [ ! -e "$path" ]; then
-    return 1
-  fi
+  [ -e "$path" ] || return 1
   realpath "$path"
 }
 
-check_installation() {
-  local quiet="${1:-}" marketplace cache marketplace_version cache_version
-  local marketplace_digest cache_digest skill skill_want bin_dir name got want
-  local runtime_root="${AGENT_COMMS_RUNTIME_ROOT:-}" failed=0
-  marketplace="$(marketplace_plugin_root)"
-  if [ ! -d "$marketplace" ]; then
-    echo "agent-comms doctor: missing marketplace: $marketplace" >&2
-    failed=1
-  fi
-  if [ "$failed" -eq 0 ]; then
-    marketplace_version="$(plugin_version "$marketplace")" || failed=1
-  fi
-  if [ "$failed" -eq 0 ]; then
-    cache="$(claude_cache_base)/$marketplace_version"
-    if [ ! -d "$cache" ]; then
-      echo "agent-comms doctor: missing Claude cache: $cache" >&2
-      failed=1
-    fi
-  fi
-  if [ -n "${cache:-}" ] && [ -d "$cache" ]; then
-    cache_version="$(plugin_version "$cache")" || failed=1
-    if [ "${cache_version:-}" != "${marketplace_version:-}" ]; then
-      echo "agent-comms doctor: version mismatch: marketplace=${marketplace_version:-unknown} cache=${cache_version:-unknown}" >&2
-      failed=1
-    fi
-    marketplace_digest="$(runtime_digest "$marketplace")" || failed=1
-    cache_digest="$(runtime_digest "$cache")" || failed=1
-    if [ "${marketplace_digest:-}" != "${cache_digest:-}" ]; then
-      echo "agent-comms doctor: runtime digest mismatch: marketplace=${marketplace_digest:-unknown} cache=${cache_digest:-unknown}" >&2
-      failed=1
-    fi
-    if [ -n "$runtime_root" ]; then
-      got="$(realpath "$runtime_root")"
-      want="$(realpath "$cache")"
-      if [ "$got" != "$want" ]; then
-        echo "agent-comms doctor: runtime target mismatch: $got != $want" >&2
-        failed=1
-      fi
-    fi
-    skill="$(codex_skill_path)"
-    skill_want="$cache/skills/agent-comms"
-    got="$(resolved_path "$skill" 2>/dev/null || true)"
-    want="$(resolved_path "$skill_want" 2>/dev/null || true)"
-    if [ "$got" != "$want" ]; then
-      echo "agent-comms doctor: Codex skill target mismatch: ${got:-missing} != ${want:-missing}" >&2
-      failed=1
-    fi
-    bin_dir="$(agent_comms_bin_dir)"
-    for name in agent-comms claude-review codex-review lib.sh; do
-      got="$(resolved_path "$bin_dir/$name" 2>/dev/null || true)"
-      want="$(resolved_path "$cache/bin/$name" 2>/dev/null || true)"
-      if [ "$got" != "$want" ]; then
-        echo "agent-comms doctor: command target mismatch: $bin_dir/$name -> ${got:-missing}; want ${want:-missing}" >&2
-        failed=1
-      fi
-    done
-  fi
-  if [ "$failed" -ne 0 ]; then
-    echo "repair: claude plugin update agent-comms@klaidliadon" >&2
-    echo "repair: agent-comms install-codex" >&2
-    return 1
-  fi
-  if [ "$quiet" != "--quiet" ]; then
-    echo "version: $marketplace_version"
-    echo "digest: $marketplace_digest"
-    echo "marketplace: $(realpath "$marketplace")"
-    echo "cache: $(realpath "$cache")"
-    echo "Codex skill: $(realpath "$skill")"
-    echo "commands: $(realpath "$cache/bin")"
-    echo "installation: consistent"
-  fi
-}
-
-# --- root resolution ---
-# canon_dir DIR — print canonical absolute path of a possibly-nonexistent dir
-# (its parent MUST exist). Lets --dir be compared byte-for-byte in assert_confined.
 canon_dir() {
-  local p="$1"
-  if [ -d "$p" ]; then ( cd "$p" && pwd ); return; fi
-  local par; par="$( cd "$(dirname "$p")" 2>/dev/null && pwd )" \
-    || { echo "no such parent dir for: $p" >&2; return 1; }
-  printf '%s/%s\n' "$par" "$(basename "$p")"
+  local path="$1" parent
+  if [ -d "$path" ]; then
+    (cd "$path" && pwd)
+    return
+  fi
+  parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd)" || {
+    echo "no such parent dir for: $path" >&2
+    return 1
+  }
+  printf '%s/%s\n' "$parent" "$(basename "$path")"
 }
 
-# comms_root — print <root> (NOT including tmp/agent-comms).
-# Precedence: --root flag (COMMS_ROOT_FLAG) > AGENT_COMMS_ROOT > git root > $PWD.
 comms_root() {
-  local root gcd
+  local root git_dir
   if [ -n "${COMMS_ROOT_FLAG:-}" ]; then
     root="$COMMS_ROOT_FLAG"
   elif [ -n "${AGENT_COMMS_ROOT:-}" ]; then
     root="$AGENT_COMMS_ROOT"
-  elif gcd=$(git rev-parse --git-common-dir 2>/dev/null); then
-    root="$(cd "$(dirname "$gcd")" && pwd)"
+  elif git_dir="$(git rev-parse --git-common-dir 2>/dev/null)"; then
+    root="$(cd "$(dirname "$git_dir")" && pwd)"
   else
     root="$PWD"
   fi
   realpath "$root"
 }
 
-# comms_dir — the comms dir. --dir flag (COMMS_DIR_FLAG) overrides outright;
-# otherwise <root>/tmp/agent-comms.
 comms_dir() {
-  if [ -n "${COMMS_DIR_FLAG:-}" ]; then printf '%s\n' "$COMMS_DIR_FLAG"; return; fi
-  echo "$(comms_root)/tmp/agent-comms"
+  if [ -n "${COMMS_DIR_FLAG:-}" ]; then
+    printf '%s\n' "$COMMS_DIR_FLAG"
+    return
+  fi
+  printf '%s/tmp/agent-comms\n' "$(comms_root)"
 }
 
-# channel_file CHANNEL ; cursor_file CHANNEL AGENT
-channel_file() { echo "$(comms_dir)/$1.md"; }
-cursor_file()  { echo "$(comms_dir)/.cursors/$1/$2"; }
-
-# make_frame SENDER TAG TS  (body on stdin) — emit: frame-comment line + block.
-# Block = readable header line + body + trailing newline. bytes=N is the BYTE
-# length of the block (LC_ALL=C wc -c), never character count.
-make_frame() {
-  local sender="$1" tag="$2" ts="$3"
-  local body; body="$(cat)"
-  local header="## [$ts] $sender"
-  [ -n "$tag" ] && header="$header · ${tag/=/ }"   # readable render (space), wire tag stays in comment
-  local block; block="$header"$'\n'"$body"$'\n'      # block ends with newline; it is part of N
-  local n; n=$(printf '%s' "$block" | LC_ALL=C wc -c | tr -d ' ')
-  printf '<!-- agent-comms v=1 sender=%s ts=%s tag=%s bytes=%s -->\n' "$sender" "$ts" "$tag" "$n"
-  printf '%s' "$block"                               # write EXACTLY the block, no extra \n
+channel_file() {
+  printf '%s/%s.md\n' "$(comms_dir)" "$1"
 }
 
-# parse_frames BASE_OFFSET  (buffer on stdin)
-# Emits one TSV line per COMPLETE frame: "<start>\t<end>\t<sender>\t<tag>"
-# (start/end = absolute byte offsets = BASE_OFFSET + position). Writes each frame
-# body block to $BODY_DIR/<n> (1-based) if BODY_DIR set. Stops at the first
-# incomplete frame; never advances past it.
-parse_frames() {
-  local base="$1"
-  BODY_DIR="${BODY_DIR:-}" perl -e '
-    use strict; use warnings;
-    my $base = $ARGV[0];
-    local $/; binmode(STDIN); my $buf = <STDIN>; $buf = "" unless defined $buf;
-    my $bodydir = $ENV{BODY_DIR} // "";
-    my $pos = 0; my $n = 0; my $len = length($buf);
-    while ($pos < $len) {
-      my $nl = index($buf, "\n", $pos);
-      last if $nl < 0;                                  # no complete comment line yet
-      my $line = substr($buf, $pos, $nl - $pos);
-      last unless $line =~ /^<!-- agent-comms .* sender=(\S+) .* tag=(\S*) bytes=(\d+) -->$/;
-      my ($sender,$tag,$bytes) = ($1,$2,$3);
-      my $body_start = $nl + 1;
-      last if $body_start + $bytes > $len;              # incomplete frame — stop, do not advance
-      my $body = substr($buf, $body_start, $bytes);
-      $n++;
-      if ($bodydir ne "") { open(my $b, ">", "$bodydir/$n") or die $!; binmode($b); print {$b} $body; close($b); }
-      my $start = $base + $pos;
-      my $end   = $base + $body_start + $bytes;
-      print "$start\t$end\t$sender\t$tag\n";
-      $pos = $body_start + $bytes;
-    }
-  ' "$base"
+cursor_file() {
+  printf '%s/.cursors/%s/%s\n' "$(comms_dir)" "$1" "$2"
 }
 
-# assert_confined PATH — fail unless PATH's parent resolves under comms_dir.
 assert_confined() {
-  local target="$1" base; base="$(comms_dir)"
-  local parent; parent="$(cd "$(dirname "$target")" 2>/dev/null && pwd || true)"
-  case "$parent/" in "$base/"*) return 0;; *) echo "refusing path outside $base: $target" >&2; return 1;; esac
+  local target="$1" base parent
+  base="$(comms_dir)"
+  parent="$(cd "$(dirname "$target")" 2>/dev/null && pwd || true)"
+  case "$parent/" in
+    "$base/"*) return 0;;
+    *) echo "refusing path outside $base: $target" >&2; return 1;;
+  esac
 }

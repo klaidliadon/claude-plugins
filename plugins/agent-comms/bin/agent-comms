@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agent-comms — single entrypoint for the 2-party agent review-loop transport.
-# Subcommands: ack | send | recv | transcript | path | hash | doctor | install-codex
+# Subcommands: init | send | recv | wait-ready | resume | launch | transcript | path | hash | install | update | doctor | release
 set -euo pipefail
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
@@ -12,15 +12,22 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
-  agent-comms ack        --channel C --from F                    (append a fixed ready/ACK frame)
-  agent-comms send       --channel C --from F [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
+  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R [--semantic-timeout 1..3600]
+  agent-comms send       --channel C --from F --generation N [--continue] [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
+  agent-comms wait-ready --channel C --me M --peer P --generation N [--timeout N]
+  agent-comms resume     --channel C --from F --generation N --replace ROLE --body-file F [--artifact-file F]
+                                                             (replace the interrupted peer and emit its bounded resume packet)
+  agent-comms launch     <claude|codex> --role <driver|reviewer> --peer NAME --channel C
+                         --generation N --prompt-file F --client-release V [runtime args after --]
   agent-comms transcript --channel C                         (clean chat view)
   agent-comms path       --channel C                         (resolved channel file path)
   agent-comms hash       <file>                              (sha256 of file, for review/approve refs)
+  agent-comms install                                        (verify and atomically activate Claude's selected release)
+  agent-comms update [--check]                               (check or reconcile an updated release)
   agent-comms doctor [--quiet]                               (verify one immutable release)
-  agent-comms install-codex                                  (link skill into ~/.codex/skills)
+  agent-comms release <manifest|check|publish>                (maintainer release workflow)
 
 global options (any subcommand; precedence --dir > --root > $AGENT_COMMS_ROOT > git root > $PWD):
   --root DIR   repo root; channel lives at DIR/tmp/agent-comms
@@ -28,32 +35,89 @@ global options (any subcommand; precedence --dir > --root > $AGENT_COMMS_ROOT > 
 EOF
 }
 
-cmd_ack() {
-  local CHANNEL="" FROM=""
+cmd_init() {
+  local CHANNEL="" SESSION="" DRIVER="" PEER="" RELEASE="" DIGEST="" PROTOCOL="" RELEASE_ROOT=""
+  local PROGRESS_FRAMES=8 PROGRESS_BYTES=512 HEARTBEAT_AFTER=30 HEARTBEAT_INTERVAL=30
+  local SEMANTIC_TIMEOUT=300
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel) CHANNEL="$2"; shift 2;;
-      --from)    FROM="$2";    shift 2;;
+      --session) SESSION="$2"; shift 2;;
+      --driver) DRIVER="$2"; shift 2;;
+      --peer) PEER="$2"; shift 2;;
+      --release) RELEASE="$2"; shift 2;;
+      --digest) DIGEST="$2"; shift 2;;
+      --protocol) PROTOCOL="$2"; shift 2;;
+      --release-root) RELEASE_ROOT="$2"; shift 2;;
+      --progress-frames) PROGRESS_FRAMES="$2"; shift 2;;
+      --progress-bytes) PROGRESS_BYTES="$2"; shift 2;;
+      --heartbeat-after) HEARTBEAT_AFTER="$2"; shift 2;;
+      --heartbeat-interval) HEARTBEAT_INTERVAL="$2"; shift 2;;
+      --semantic-timeout) SEMANTIC_TIMEOUT="$2"; shift 2;;
       *) echo "unknown arg: $1" >&2; exit 64;;
     esac
   done
   if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
-  if ! valid_name "$FROM";    then echo "bad --from"    >&2; exit 64; fi
-  local dir file ts
+  if ! valid_name "$SESSION"; then echo "bad --session" >&2; exit 64; fi
+  if ! valid_name "$DRIVER"; then echo "bad --driver" >&2; exit 64; fi
+  if ! valid_name "$PEER"; then echo "bad --peer" >&2; exit 64; fi
+  if [ -z "$RELEASE" ] || [ -z "$DIGEST" ] || [ -z "$PROTOCOL" ] || [ -z "$RELEASE_ROOT" ]; then
+    if [ -n "$RELEASE$DIGEST$PROTOCOL$RELEASE_ROOT" ]; then
+      echo "release identity must be fully explicit or fully automatic" >&2
+      exit 64
+    fi
+    RELEASE_ROOT="$(realpath "$AGENT_COMMS_RUNTIME_ROOT")"
+    if [ ! -f "$RELEASE_ROOT/manifest.lock" ]; then
+      echo "cannot initialize from an unmanifested release: $RELEASE_ROOT" >&2
+      exit 1
+    fi
+    bash "$HERE/release.sh" verify --root "$RELEASE_ROOT"
+    RELEASE="$(plugin_version "$RELEASE_ROOT")"
+    DIGEST="$(file_sha256 "$RELEASE_ROOT/manifest.lock")"
+    PROTOCOL=2
+  else
+    if [ ! -f "$RELEASE_ROOT/manifest.lock" ]; then
+      echo "explicit release root is missing or unmanifested: $RELEASE_ROOT" >&2
+      exit 1
+    fi
+    RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
+    bash "$HERE/release.sh" verify --root "$RELEASE_ROOT"
+    if [ "$RELEASE" != "$(plugin_version "$RELEASE_ROOT")" ] ||
+       [ "$DIGEST" != "$(file_sha256 "$RELEASE_ROOT/manifest.lock")" ] ||
+       [ "$PROTOCOL" != "2" ]; then
+      echo "explicit release identity does not match $RELEASE_ROOT" >&2
+      exit 1
+    fi
+  fi
+  local dir file
   dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
   file="$(channel_file "$CHANNEL")"; assert_confined "$file"
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf 'ACK' | make_frame "$FROM" "ready" "$ts" | flock_append "$file"
+  perl "$HERE/protocol.pl" init \
+    --file "$file" \
+    --session "$SESSION" \
+    --driver "$DRIVER" \
+    --peer "$PEER" \
+    --release "$RELEASE" \
+    --digest "$DIGEST" \
+    --protocol "$PROTOCOL" \
+    --release-root "$RELEASE_ROOT" \
+    --progress-frames "$PROGRESS_FRAMES" \
+    --progress-bytes "$PROGRESS_BYTES" \
+    --heartbeat-after "$HEARTBEAT_AFTER" \
+    --heartbeat-interval "$HEARTBEAT_INTERVAL" \
+    --semantic-timeout "$SEMANTIC_TIMEOUT"
 }
 
 cmd_send() {
-  local CHANNEL="" FROM="" TAG="" BODYFILE="" REFKIND="" REFFILE=""
+  local CHANNEL="" FROM="" TAG="" BODYFILE="" REFKIND="" REFFILE="" GENERATION="" STATE="over"
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel)        CHANNEL="$2";  shift 2;;
       --from)           FROM="$2";     shift 2;;
       --tag)            TAG="$2";      shift 2;;
       --body-file)      BODYFILE="$2"; shift 2;;
+      --generation)     GENERATION="$2"; shift 2;;
+      --continue)       STATE="continue"; shift;;
       --review-ref)     REFKIND="review-ref";     REFFILE="$2"; shift 2;;
       --approve-ref)    REFKIND="approve-ref";    REFFILE="$2"; shift 2;;
       --converged-ref)  REFKIND="converged-ref";  REFFILE="$2"; shift 2;;
@@ -73,88 +137,152 @@ cmd_send() {
   fi
   if [ -n "$TAG" ] && ! valid_tag "$TAG"; then echo "bad --tag" >&2; exit 64; fi
   if [ -n "$BODYFILE" ] && [ ! -f "$BODYFILE" ]; then echo "no such --body-file: $BODYFILE" >&2; exit 64; fi
-  local dir file ts
-  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
-  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # Body comes from --body-file when given (no `printf | …` pipe needed), else stdin.
-  if [ -n "$BODYFILE" ]; then
-    make_frame "$FROM" "$TAG" "$ts" < "$BODYFILE" | flock_append "$file"
-  else
-    make_frame "$FROM" "$TAG" "$ts" | flock_append "$file"
+  case "$GENERATION" in ''|*[!0-9]*) echo "bad --generation" >&2; exit 64;; esac
+  local v2dir v2file temp_body="" KIND="message"
+  v2dir="$(comms_dir)"; mkdir -p "$v2dir/.cursors/$CHANNEL"
+  v2file="$(channel_file "$CHANNEL")"; assert_confined "$v2file"
+  if [ -z "$BODYFILE" ]; then
+    temp_body="$(mktemp "${TMPDIR:-/tmp}/agent-comms-body.XXXXXX")"
+    trap 'rm -f "${temp_body:-}"' EXIT
+    cat > "$temp_body"
+    BODYFILE="$temp_body"
   fi
+  [ -n "$TAG" ] || TAG="-"
+  case "$TAG" in
+    converged-ref=*|stopped-reason=*)
+      if [ "$STATE" = "continue" ]; then echo "terminal send cannot use --continue" >&2; exit 64; fi
+      KIND="control"
+      STATE="terminal"
+      ;;
+  esac
+  perl "$HERE/protocol.pl" append \
+    --file "$v2file" \
+    --sender "$FROM" \
+    --generation "$GENERATION" \
+    --kind "$KIND" \
+    --state "$STATE" \
+    --tag="$TAG" \
+    --body-file "$BODYFILE"
 }
 
 cmd_recv() {
-  local CHANNEL="" ME="" TIMEOUT=590
+  local CHANNEL="" ME="" TIMEOUT=540 GENERATION="" SILENCE_SECONDS="" TURN_SECONDS=1800
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel) CHANNEL="$2"; shift 2;;
       --me)      ME="$2";      shift 2;;
       --timeout) TIMEOUT="$2"; shift 2;;
+      --generation) GENERATION="$2"; shift 2;;
+      --silence-seconds) SILENCE_SECONDS="$2"; shift 2;;
+      --turn-seconds) TURN_SECONDS="$2"; shift 2;;
       *) echo "unknown arg: $1" >&2; exit 64;;
     esac
   done
   if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
   if ! valid_name "$ME";      then echo "bad --me"      >&2; exit 64; fi
-  local dir file cur off
+  case "$GENERATION" in ''|*[!0-9]*) echo "bad --generation" >&2; exit 64;; esac
+  [ -n "$SILENCE_SECONDS" ] || SILENCE_SECONDS="$TIMEOUT"
+  local v2dir v2file v2cur
+  v2dir="$(comms_dir)"; mkdir -p "$v2dir/.cursors/$CHANNEL"
+  v2file="$(channel_file "$CHANNEL")"; assert_confined "$v2file"
+  v2cur="$(cursor_file "$CHANNEL" "$ME.$GENERATION")"; assert_confined "$v2cur"
+  perl "$HERE/protocol.pl" recv \
+    --file "$v2file" \
+    --cursor "$v2cur" \
+    --me "$ME" \
+    --generation "$GENERATION" \
+    --silence-seconds "$SILENCE_SECONDS" \
+    --turn-seconds "$TURN_SECONDS"
+}
+
+cmd_resume() {
+  local CHANNEL="" FROM="" GENERATION="" REPLACE="" BODYFILE="" ARTIFACTFILE=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --from) FROM="$2"; shift 2;;
+      --generation) GENERATION="$2"; shift 2;;
+      --replace) REPLACE="$2"; shift 2;;
+      --body-file) BODYFILE="$2"; shift 2;;
+      --artifact-file) ARTIFACTFILE="$2"; shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
+  done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$FROM"; then echo "bad --from" >&2; exit 64; fi
+  if ! valid_name "$REPLACE"; then echo "bad --replace" >&2; exit 64; fi
+  case "$GENERATION" in ''|*[!0-9]*) echo "bad --generation" >&2; exit 64;; esac
+  if [ -z "$BODYFILE" ] || [ ! -f "$BODYFILE" ]; then echo "no such --body-file: $BODYFILE" >&2; exit 64; fi
+  if [ -n "$ARTIFACTFILE" ] && [ ! -f "$ARTIFACTFILE" ]; then echo "no such --artifact-file: $ARTIFACTFILE" >&2; exit 64; fi
+  local dir file result new_generation offset cursor temporary
+  local protocol_args=()
   dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
   file="$(channel_file "$CHANNEL")"; assert_confined "$file"
-  if [ ! -e "$file" ]; then : > "$file"; fi
-  cur="$(cursor_file "$CHANNEL" "$ME")"; assert_confined "$cur"
-  off=0
-  if [ -f "$cur" ]; then off="$(cat "$cur")"; fi
-  case "$off" in ''|*[!0-9]*) off=0;; esac
-  bd=""   # script-global so the EXIT trap (which fires outside this function) can see it
-  trap 'rm -rf "${bd:-}"' EXIT INT TERM
-  local deadline; deadline=$(( $(date +%s) + TIMEOUT ))
-  while :; do
-    bd="${TMPDIR:-/tmp}/acrb.$$.$RANDOM"; mkdir -p "$bd"
-    local idx; idx="$(read_from "$file" "$off" | BODY_DIR="$bd" parse_frames "$off")"
-    if [ -n "$idx" ]; then
-      local peer_out="" last_peer_end="" last_any_end="" i=0 start end sender tag
-      while IFS=$'\t' read -r start end sender tag; do
-        i=$((i+1)); last_any_end="$end"
-        if [ "$sender" != "$ME" ]; then
-          peer_out="${peer_out}$(cat "$bd/$i")"$'\n'
-          last_peer_end="$end"
-        fi
-      done <<< "$idx"
-      rm -rf "$bd"
-      if [ -n "$last_peer_end" ]; then
-        echo "$last_peer_end" > "$cur"
-        printf '%s' "$peer_out"
-        exit 0
-      fi
-      if [ -n "$last_any_end" ]; then
-        echo "$last_any_end" > "$cur"
-        off="$last_any_end"
-      fi
-    else
-      rm -rf "$bd"
-    fi
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "__TIMEOUT__"
-      exit 2
-    fi
-    sleep 0.3
+  protocol_args=(
+    resume
+    --file "$file" \
+    --driver "$FROM" \
+    --generation "$GENERATION" \
+    --replace "$REPLACE" \
+    --body-file "$BODYFILE"
+  )
+  if [ -n "$ARTIFACTFILE" ]; then
+    protocol_args+=(--artifact-file "$ARTIFACTFILE")
+  fi
+  result="$(perl "$HERE/protocol.pl" "${protocol_args[@]}")"
+  case "$result" in
+    generation=[0-9]*" cursor="[0-9]*) ;;
+    *) echo "invalid resume result: $result" >&2; exit 1;;
+  esac
+  new_generation="${result#generation=}"
+  new_generation="${new_generation%% *}"
+  offset="${result##* cursor=}"
+  cursor="$(cursor_file "$CHANNEL" "$REPLACE.$new_generation")"; assert_confined "$cursor"
+  temporary="$cursor.$$"
+  printf '%s\n' "$offset" > "$temporary"
+  mv "$temporary" "$cursor"
+}
+
+cmd_wait_ready() {
+  local CHANNEL="" ME="" PEER="" GENERATION="" TIMEOUT=30
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --channel) CHANNEL="$2"; shift 2;;
+      --me) ME="$2"; shift 2;;
+      --peer) PEER="$2"; shift 2;;
+      --generation) GENERATION="$2"; shift 2;;
+      --timeout) TIMEOUT="$2"; shift 2;;
+      *) echo "unknown arg: $1" >&2; exit 64;;
+    esac
   done
+  if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
+  if ! valid_name "$ME"; then echo "bad --me" >&2; exit 64; fi
+  if ! valid_name "$PEER"; then echo "bad --peer" >&2; exit 64; fi
+  case "$GENERATION" in ''|*[!0-9]*) echo "bad --generation" >&2; exit 64;; esac
+  local dir file cursor
+  dir="$(comms_dir)"; mkdir -p "$dir/.cursors/$CHANNEL"
+  file="$(channel_file "$CHANNEL")"; assert_confined "$file"
+  cursor="$(cursor_file "$CHANNEL" "control.$ME")"; assert_confined "$cursor"
+  perl "$HERE/protocol.pl" wait-control \
+    --file "$file" \
+    --cursor "$cursor" \
+    --me "$ME" \
+    --tag "launcher-ready=$PEER.$GENERATION" \
+    --timeout "$TIMEOUT"
 }
 
 cmd_transcript() {
   local CHANNEL=""
   while [ $# -gt 0 ]; do case "$1" in --channel) CHANNEL="$2"; shift 2;; *) shift;; esac; done
   if ! valid_name "$CHANNEL"; then echo "bad --channel" >&2; exit 64; fi
-  local file idx i
+  local file
   file="$(channel_file "$CHANNEL")"; [ -e "$file" ] || exit 0
-  bd="${TMPDIR:-/tmp}/actrans.$$.$RANDOM"; mkdir -p "$bd"   # script-global for the EXIT trap below
-  trap 'rm -rf "${bd:-}"' EXIT
-  idx="$(read_from "$file" 0 | BODY_DIR="$bd" parse_frames 0)"
-  i=0
-  while IFS=$'\t' read -r _ _ _ _; do
-    i=$((i+1))
-    if [ -f "$bd/$i" ]; then cat "$bd/$i"; echo; fi
-  done <<< "$idx"
+  perl "$HERE/protocol.pl" transcript --file "$file"
+}
+
+cmd_launch() {
+  COMMS_ROOT_FLAG="$COMMS_ROOT_FLAG" COMMS_DIR_FLAG="$COMMS_DIR_FLAG" \
+    exec bash "$HERE/launch.sh" "$@"
 }
 
 cmd_path() {
@@ -171,72 +299,20 @@ cmd_hash() {
 }
 
 cmd_doctor() {
-  local quiet=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --quiet) quiet="--quiet"; shift;;
-      *) echo "unknown arg: $1" >&2; exit 64;;
-    esac
-  done
-  check_installation "$quiet"
+  COMMS_ROOT_FLAG="$COMMS_ROOT_FLAG" COMMS_DIR_FLAG="$COMMS_DIR_FLAG" \
+    bash "$HERE/release.sh" doctor "$@"
 }
 
-assert_agent_comms_link_owned() {
-  local dst="$1" marketplace="$2" cache_base="$3" cur
-  if [ -L "$dst" ]; then
-    cur="$(resolved_path "$dst" 2>/dev/null || true)"
-    case "$cur/" in
-      "$marketplace/"*|"$cache_base/"*) ;;
-      *) echo "refusing unrelated symlink: $dst -> ${cur:-dangling}" >&2; return 1;;
-    esac
-  elif [ -e "$dst" ]; then
-    echo "refusing non-symlink: $dst" >&2
-    return 1
-  fi
+cmd_install() {
+  bash "$HERE/release.sh" install "$@"
 }
 
-set_agent_comms_link() {
-  local dst="$1" target="$2"
-  mkdir -p "$(dirname "$dst")"
-  ln -sfn "$target" "$dst"
-  echo "linked $dst -> $target"
+cmd_update() {
+  bash "$HERE/release.sh" update "$@"
 }
 
-cmd_install_codex() {
-  local marketplace cache_base cache marketplace_version cache_version
-  local marketplace_digest cache_digest skill bin_dir name
-  marketplace="$(realpath "$(marketplace_plugin_root)")"
-  cache_base="$(realpath "$(claude_cache_base)")"
-  marketplace_version="$(plugin_version "$marketplace")"
-  cache="$cache_base/$marketplace_version"
-  if [ ! -d "$cache" ]; then
-    echo "agent-comms install-codex: missing Claude cache: $cache" >&2
-    echo "repair: claude plugin update agent-comms@klaidliadon" >&2
-    return 1
-  fi
-  cache_version="$(plugin_version "$cache")"
-  if [ "$cache_version" != "$marketplace_version" ]; then
-    echo "agent-comms install-codex: version mismatch: marketplace=$marketplace_version cache=$cache_version" >&2
-    return 1
-  fi
-  marketplace_digest="$(runtime_digest "$marketplace")"
-  cache_digest="$(runtime_digest "$cache")"
-  if [ "$cache_digest" != "$marketplace_digest" ]; then
-    echo "agent-comms install-codex: runtime digest mismatch: marketplace=$marketplace_digest cache=$cache_digest" >&2
-    echo "repair: claude plugin update agent-comms@klaidliadon" >&2
-    return 1
-  fi
-  skill="$(codex_skill_path)"
-  bin_dir="$(agent_comms_bin_dir)"
-  assert_agent_comms_link_owned "$skill" "$marketplace" "$cache_base"
-  for name in agent-comms claude-review codex-review lib.sh; do
-    assert_agent_comms_link_owned "$bin_dir/$name" "$marketplace" "$cache_base"
-  done
-  set_agent_comms_link "$skill" "$cache/skills/agent-comms"
-  for name in agent-comms claude-review codex-review lib.sh; do
-    set_agent_comms_link "$bin_dir/$name" "$cache/bin/$name"
-  done
-  AGENT_COMMS_RUNTIME_ROOT="$cache" bash "$cache/bin/agent-comms" doctor
+cmd_release() {
+  bash "$HERE/release.sh" "$@"
 }
 
 cmd="${1:-}"; if [ $# -gt 0 ]; then shift; fi
@@ -257,14 +333,90 @@ done
 set -- ${rest[@]+"${rest[@]}"}
 
 case "$cmd" in
-  ack)           cmd_ack "$@";;
+  send|recv|wait-ready|resume|launch|transcript)
+    CHANNEL_ARG=""
+    scan=( ${rest[@]+"${rest[@]}"} )
+    index=0
+    while [ "$index" -lt "${#scan[@]}" ]; do
+      if [ "${scan[$index]}" = "--channel" ]; then
+        next=$((index + 1))
+        CHANNEL_ARG="${scan[$next]:-}"
+        break
+      fi
+      index=$((index + 1))
+    done
+    if valid_name "$CHANNEL_ARG"; then
+      PIN_FILE="$(channel_file "$CHANNEL_ARG")"
+      if [ -f "$PIN_FILE" ] && head -1 "$PIN_FILE" | grep -q '<!-- agent-comms v=2 '; then
+        PIN_METADATA="$(mktemp "${TMPDIR:-/tmp}/agent-comms-pin.XXXXXX")"
+        trap 'rm -f "${PIN_METADATA:-}"' EXIT
+        perl "$HERE/protocol.pl" inspect --allow-incomplete --file "$PIN_FILE" > "$PIN_METADATA"
+        PIN_ROOT="$(awk 'index($0, "release_root=") == 1 { print substr($0, 14); exit }' "$PIN_METADATA")"
+        PIN_RELEASE="$(awk 'index($0, "release=") == 1 { print substr($0, 9); exit }' "$PIN_METADATA")"
+        PIN_DIGEST="$(awk 'index($0, "digest=") == 1 { print substr($0, 8); exit }' "$PIN_METADATA")"
+        if [ ! -d "$PIN_ROOT" ]; then
+          echo "pinned release is missing: $PIN_ROOT; refusing to fall forward to current" >&2
+          exit 1
+        fi
+        PIN_ROOT="$(realpath "$PIN_ROOT")"
+        if [ "$(realpath "$AGENT_COMMS_RUNTIME_ROOT")" != "$PIN_ROOT" ]; then
+          PIN_CACHE_BASE="$(dirname "$(realpath "$AGENT_COMMS_RUNTIME_ROOT")")"
+          if [ -z "$PIN_CACHE_BASE" ] || [ "$PIN_ROOT" != "$PIN_CACHE_BASE/$PIN_RELEASE" ]; then
+            echo "pinned release is outside the trusted cache: $PIN_ROOT" >&2
+            exit 1
+          fi
+        fi
+        bash "$HERE/release.sh" verify --root "$PIN_ROOT"
+        if [ "$(plugin_version "$PIN_ROOT")" != "$PIN_RELEASE" ] ||
+           [ "$(file_sha256 "$PIN_ROOT/manifest.lock")" != "$PIN_DIGEST" ]; then
+          echo "pinned release identity mismatch: $PIN_ROOT" >&2
+          exit 1
+        fi
+        rm -f "$PIN_METADATA"
+        PIN_METADATA=""
+        if [ "$(realpath "$AGENT_COMMS_RUNTIME_ROOT")" != "$PIN_ROOT" ]; then
+          if [ "${AGENT_COMMS_DISPATCH_TRACE:-}" = "1" ]; then
+            echo "dispatching pinned release: $PIN_ROOT" >&2
+          fi
+          forward=("$cmd" ${rest[@]+"${rest[@]}"})
+          if [ -n "$COMMS_DIR_FLAG" ]; then
+            forward+=(--dir "$COMMS_DIR_FLAG")
+          elif [ -n "$COMMS_ROOT_FLAG" ]; then
+            forward+=(--root "$COMMS_ROOT_FLAG")
+          fi
+          exec "$PIN_ROOT/bin/agent-comms" "${forward[@]}"
+        fi
+      fi
+    fi
+    ;;
+esac
+
+case "$cmd" in
+  init|send|recv|wait-ready|resume|launch|transcript)
+    RUNTIME_VERSION="$(plugin_version "$AGENT_COMMS_RUNTIME_ROOT")"
+    IMMUTABLE_ROOT="$(claude_cache_base)/$RUNTIME_VERSION"
+    if [ ! -d "$IMMUTABLE_ROOT" ] ||
+       [ "$(realpath "$AGENT_COMMS_RUNTIME_ROOT")" != "$(realpath "$IMMUTABLE_ROOT")" ]; then
+      echo "channel commands require an immutable cache release: $IMMUTABLE_ROOT" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+case "$cmd" in
+  init)          cmd_init "$@";;
   send)          cmd_send "$@";;
   recv)          cmd_recv "$@";;
+  wait-ready)    cmd_wait_ready "$@";;
+  resume)        cmd_resume "$@";;
+  launch)        cmd_launch "$@";;
   transcript)    cmd_transcript "$@";;
   path)          cmd_path "$@";;
   hash)          cmd_hash "$@";;
+  install)       cmd_install "$@";;
+  update)        cmd_update "$@";;
   doctor)        cmd_doctor "$@";;
-  install-codex) cmd_install_codex "$@";;
+  release)       cmd_release "$@";;
   -h|--help|help) usage; exit 0;;
   "") usage; exit 64;;
   *) echo "unknown subcommand: $cmd" >&2; usage; exit 64;;
