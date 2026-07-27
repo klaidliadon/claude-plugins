@@ -865,24 +865,17 @@ sub cmd_wait_control {
 }
 
 my $command = shift(@ARGV) // "";
-if ($command eq "init") {
-    cmd_init(@ARGV);
-} elsif ($command eq "append") {
-    cmd_append(@ARGV);
-} elsif ($command eq "resume") {
-    cmd_resume(0, @ARGV);
-} elsif ($command eq "recover-tail") {
-    cmd_resume(1, @ARGV);
-} elsif ($command eq "resume-packet") {
-    cmd_resume_packet(@ARGV);
-} elsif ($command eq "recv") {
-    cmd_recv(@ARGV);
-} elsif ($command eq "wait-control") {
-    cmd_wait_control(@ARGV);
-} elsif ($command eq "transcript") {
-    cmd_transcript(@ARGV);
-} elsif ($command eq "inspect") {
-    cmd_inspect(@ARGV);
-} else {
-    fail("unknown command '$command'");
-}
+my %commands = (
+    init => sub { cmd_init(@ARGV) },
+    append => sub { cmd_append(@ARGV) },
+    resume => sub { cmd_resume(0, @ARGV) },
+    "recover-tail" => sub { cmd_resume(1, @ARGV) },
+    "resume-packet" => sub { cmd_resume_packet(@ARGV) },
+    recv => sub { cmd_recv(@ARGV) },
+    "wait-control" => sub { cmd_wait_control(@ARGV) },
+    transcript => sub { cmd_transcript(@ARGV) },
+    inspect => sub { cmd_inspect(@ARGV) },
+);
+my $handler = $commands{$command};
+fail("unknown command '$command'") unless $handler;
+$handler->();
