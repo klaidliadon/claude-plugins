@@ -65,6 +65,12 @@ semantic progress: report the phase, concrete evidence, and next step or
 blocker in at most 256 bytes. Skip progress frames for short single-phase work;
 never manufacture updates just to consume the budget.
 
+The session pins a `semantic_timeout` of at most 300 seconds. While an agent
+holds the floor, only one of its current-generation message frames resets that
+clock; status, heartbeat, and activity ticks do not. The launcher records
+`semantic-timeout`, terminates the runtime, and exits 124 when the limit
+expires. The waiting peer may then resume it.
+
 Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status
 `open|resolved|contested`. Only unresolved Critical/Important findings block
 approval.
@@ -90,7 +96,8 @@ Launch the peer again with its incremented generation and the same pinned
 `--client-release 2.0.0`. Pass the current artifact when one exists. The
 launcher verifies its hash and injects the checksummed resume packet; never
 replay the full transcript or fall forward to `current`. Late old-generation
-frames remain visible but are excluded from delivery.
+frames remain visible but are excluded from delivery. Replacement keeps the
+open turn number but starts fresh receive and semantic-progress deadlines.
 
 ## Finish
 

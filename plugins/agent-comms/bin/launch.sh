@@ -17,6 +17,11 @@ metadata_value() {
   awk -v key="$key" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$METADATA_FILE"
 }
 
+state_value() {
+  local state="$1" key="$2"
+  awk -v key="$key" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' <<< "$state"
+}
+
 render_command() {
   local variable="$1"
   shift
@@ -111,6 +116,64 @@ append_activity() {
     print {$handle} "ts=$timestamp seq=$sequence\n" or exit 1;
     close $handle or exit 1;
   ' "$ACTIVITY_FILE" "$epoch" "$sequence"
+}
+
+terminate_runtime() {
+  local child_pid="$1" attempts=0
+  kill -TERM "$child_pid" 2>/dev/null || return
+  while kill -0 "$child_pid" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  if kill -0 "$child_pid" 2>/dev/null; then
+    kill -KILL "$child_pid" 2>/dev/null || true
+  fi
+}
+
+fail_supervision() {
+  local child_pid="$1" status="$2" tag="$3" body="$4"
+  printf '%s\n' "$status" > "$SUPERVISOR_STATE_FILE" || true
+  append_lifecycle "$tag" "$body" || true
+  terminate_runtime "$child_pid"
+}
+
+semantic_watchdog_loop() {
+  local child_pid="$1" timeout="$2"
+  local current_size expected last_message_seq message_seq now observed_size
+  local owns_floor progress_since state
+  current_size="-1"
+  last_message_seq=""
+  owns_floor=0
+  progress_since="$(date +%s)"
+  while kill -0 "$child_pid" 2>/dev/null; do
+    now="$(date +%s)"
+    observed_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
+    if [ "$observed_size" != "$current_size" ]; then
+      if ! state="$(perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE")"; then
+        fail_supervision "$child_pid" 70 semantic-supervision-failed \
+          "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
+        return
+      fi
+      expected="$(state_value "$state" expected)"
+      message_seq="$(state_value "$state" "message_seq.$ME")"
+      if [ "$expected" = "$ME" ]; then
+        if [ "$owns_floor" -eq 0 ] || [ "$message_seq" != "$last_message_seq" ]; then
+          progress_since="$now"
+        fi
+        owns_floor=1
+      else
+        owns_floor=0
+      fi
+      current_size="$observed_size"
+      last_message_seq="$message_seq"
+    fi
+    if [ "$owns_floor" -eq 1 ] && [ $((now - progress_since)) -ge "$timeout" ]; then
+      fail_supervision "$child_pid" 124 semantic-timeout \
+        "runtime=$RUNTIME role=$ROLE generation=$GENERATION limit=${timeout}s"
+      return
+    fi
+    sleep 1
+  done
 }
 
 heartbeat_loop() {
@@ -231,9 +294,11 @@ assert_confined "$CHANNEL_FILE"
 METADATA_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-metadata.XXXXXX")"
 BOOTSTRAP_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-prompt.XXXXXX")"
 CONTROL_CURSOR="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-control.XXXXXX")"
+SUPERVISOR_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-supervisor.XXXXXX")"
 RESUME_PACKET_FILE=""
 CHILD_PID=""
 HEARTBEAT_PID=""
+SUPERVISOR_PID=""
 ACTIVITY_ROOT=""
 ACTIVITY_DIRECTORY=""
 ACTIVITY_FILE=""
@@ -242,7 +307,7 @@ ACTIVITY_WRITE_FD=""
 ACTIVITY_META_FD=""
 ACTIVITY_SAMPLE_INTERVAL=30
 cleanup_launch() {
-  rm -f "$METADATA_FILE" "$BOOTSTRAP_FILE" "$CONTROL_CURSOR"
+  rm -f "$METADATA_FILE" "$BOOTSTRAP_FILE" "$CONTROL_CURSOR" "$SUPERVISOR_STATE_FILE"
   if [ -n "$RESUME_PACKET_FILE" ]; then
     rm -f "$RESUME_PACKET_FILE"
   fi
@@ -270,6 +335,20 @@ stop_heartbeat() {
   wait "$HEARTBEAT_PID" 2>/dev/null || true
   HEARTBEAT_PID=""
 }
+stop_supervisor() {
+  local attempts=0
+  [ -n "$SUPERVISOR_PID" ] || return
+  kill "$SUPERVISOR_PID" 2>/dev/null || true
+  while kill -0 "$SUPERVISOR_PID" 2>/dev/null && [ "$attempts" -lt 20 ]; do
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  if kill -0 "$SUPERVISOR_PID" 2>/dev/null; then
+    kill -KILL "$SUPERVISOR_PID" 2>/dev/null || true
+  fi
+  wait "$SUPERVISOR_PID" 2>/dev/null || true
+  SUPERVISOR_PID=""
+}
 handle_signal() {
   local signal="$1" status="$2"
   trap - INT TERM
@@ -277,6 +356,7 @@ handle_signal() {
     kill -"$signal" "$CHILD_PID" 2>/dev/null || true
     wait "$CHILD_PID" 2>/dev/null || true
   fi
+  stop_supervisor
   stop_heartbeat
   append_lifecycle "signal=$signal" "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
   exit "$status"
@@ -295,6 +375,7 @@ RELEASE_ROOT="$(metadata_value release_root)"
 SESSION_GENERATION="$(metadata_value "generation.$ME")"
 SESSION_HEARTBEAT_AFTER="$(metadata_value heartbeat_after)"
 SESSION_HEARTBEAT_INTERVAL="$(metadata_value heartbeat_interval)"
+SESSION_SEMANTIC_TIMEOUT="$(metadata_value semantic_timeout)"
 [ "$SESSION_RELEASE" = "$CLIENT_RELEASE" ] ||
   fail_launch "session release mismatch: session=$SESSION_RELEASE launcher=$CLIENT_RELEASE"
 [ "$SESSION_PROTOCOL" = "2" ] ||
@@ -458,8 +539,17 @@ fi
 CHILD_PID=$!
 heartbeat_loop "$CHILD_PID" "$HEARTBEAT_AFTER" "$HEARTBEAT_INTERVAL" &
 HEARTBEAT_PID=$!
+semantic_watchdog_loop "$CHILD_PID" "$SESSION_SEMANTIC_TIMEOUT" &
+SUPERVISOR_PID=$!
 child_status=0
 wait "$CHILD_PID" || child_status=$?
+stop_supervisor
 stop_heartbeat
-append_lifecycle "exit=$child_status" "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
+if [ -s "$SUPERVISOR_STATE_FILE" ]; then
+  read -r child_status < "$SUPERVISOR_STATE_FILE"
+fi
+if ! append_lifecycle "exit=$child_status" \
+    "runtime=$RUNTIME role=$ROLE generation=$GENERATION"; then
+  [ -s "$SUPERVISOR_STATE_FILE" ] || exit 1
+fi
 exit "$child_status"

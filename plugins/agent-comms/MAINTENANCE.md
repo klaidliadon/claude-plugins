@@ -53,6 +53,21 @@ Channels pin `release`, `digest`, `protocol`, and an absolute immutable
 dispatch to the pinned root; a missing old release is an error, never a fallback
 to `current`. V2 has no pruning command.
 
+## Runtime progress supervision
+
+Each channel pins `semantic_timeout`, defaulting to and capped at 300 seconds.
+The launcher enforces it only while its runtime owns the floor. A
+current-generation `continue` or `over` message resets the clock; status,
+heartbeat, raw runtime output, and activity ticks do not. Acquiring the floor
+starts a fresh clock, while yielding pauses enforcement.
+
+Expiry appends `semantic-timeout`, terminates the runtime, and makes the
+launcher exit 124 even when the child reports a different status. A replacement
+control keeps the open turn number but resets both the receive deadline and the
+new launcher's semantic deadline. Protocol inspection failure is fail-closed:
+the launcher records `semantic-supervision-failed` when possible and exits
+nonzero.
+
 ## Runtime activity
 
 `launch` forces Claude `stream-json` or Codex `--json` output and fails before

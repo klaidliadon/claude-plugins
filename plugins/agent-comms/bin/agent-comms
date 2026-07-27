@@ -12,7 +12,7 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
-  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R
+  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R [--semantic-timeout 1..300]
   agent-comms send       --channel C --from F --generation N [--continue] [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
@@ -38,6 +38,7 @@ EOF
 cmd_init() {
   local CHANNEL="" SESSION="" DRIVER="" PEER="" RELEASE="" DIGEST="" PROTOCOL="" RELEASE_ROOT=""
   local PROGRESS_FRAMES=4 PROGRESS_BYTES=512 HEARTBEAT_AFTER=30 HEARTBEAT_INTERVAL=30
+  local SEMANTIC_TIMEOUT=300
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel) CHANNEL="$2"; shift 2;;
@@ -52,6 +53,7 @@ cmd_init() {
       --progress-bytes) PROGRESS_BYTES="$2"; shift 2;;
       --heartbeat-after) HEARTBEAT_AFTER="$2"; shift 2;;
       --heartbeat-interval) HEARTBEAT_INTERVAL="$2"; shift 2;;
+      --semantic-timeout) SEMANTIC_TIMEOUT="$2"; shift 2;;
       *) echo "unknown arg: $1" >&2; exit 64;;
     esac
   done
@@ -102,7 +104,8 @@ cmd_init() {
     --progress-frames "$PROGRESS_FRAMES" \
     --progress-bytes "$PROGRESS_BYTES" \
     --heartbeat-after "$HEARTBEAT_AFTER" \
-    --heartbeat-interval "$HEARTBEAT_INTERVAL"
+    --heartbeat-interval "$HEARTBEAT_INTERVAL" \
+    --semantic-timeout "$SEMANTIC_TIMEOUT"
 }
 
 cmd_send() {

@@ -264,6 +264,106 @@ test_heartbeat_and_lifecycle() {
   rm -rf "$FIXTURE"
 }
 
+test_semantic_progress_timeout_is_enforced() {
+  new_launch_fixture
+  init_launch_channel semantic-timeout \
+    --heartbeat-after 1 --heartbeat-interval 1 --semantic-timeout 1
+  printf 'review without going silent' > "$FIXTURE/task"
+  bash "$AC" send --channel semantic-timeout --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+
+  FAKE_ARGS="$FIXTURE/semantic-timeout.args" \
+    FAKE_STDIN="$FIXTURE/semantic-timeout.stdin" FAKE_SLEEP=10 \
+    PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel semantic-timeout --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1
+  assert_eq "$?" "124"
+  local raw
+  raw="$(cat "$COMMS/semantic-timeout.md")"
+  assert_contains "$raw" 'tag=semantic-timeout'
+  assert_contains "$raw" 'tag=exit=124'
+  rm -rf "$FIXTURE"
+}
+
+test_semantic_progress_resets_timeout() {
+  new_launch_fixture
+  init_launch_channel semantic-progress --semantic-timeout 1
+  printf 'review with a checkpoint' > "$FIXTURE/task"
+  printf 'phase complete; inspecting the next invariant' > "$FIXTURE/progress"
+  bash "$AC" send --channel semantic-progress --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+
+  FAKE_ARGS="$FIXTURE/semantic-progress.args" \
+    FAKE_STDIN="$FIXTURE/semantic-progress.stdin" \
+    FAKE_SLEEP=1.5 FAKE_EXIT=7 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel semantic-progress --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1 &
+  local launcher_pid=$! attempts=0
+  while [ ! -f "$FIXTURE/semantic-progress.args" ] && [ "$attempts" -lt 100 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  sleep 0.2
+  bash "$AC" send --channel semantic-progress --dir "$COMMS" \
+    --from claude --generation 1 --continue --body-file "$FIXTURE/progress"
+  wait "$launcher_pid"
+  assert_eq "$?" "7"
+  local raw
+  raw="$(cat "$COMMS/semantic-progress.md")"
+  assert_not_contains "$raw" 'tag=semantic-timeout'
+  assert_contains "$raw" 'tag=exit=7'
+  rm -rf "$FIXTURE"
+}
+
+test_semantic_timeout_pauses_without_floor() {
+  new_launch_fixture
+  init_launch_channel semantic-waiting --semantic-timeout 1
+
+  FAKE_ARGS="$FIXTURE/semantic-waiting.args" \
+    FAKE_STDIN="$FIXTURE/semantic-waiting.stdin" \
+    FAKE_SLEEP=1.5 FAKE_EXIT=7 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel semantic-waiting --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1
+  assert_eq "$?" "7"
+  local raw
+  raw="$(cat "$COMMS/semantic-waiting.md")"
+  assert_not_contains "$raw" 'tag=semantic-timeout'
+  assert_contains "$raw" 'tag=exit=7'
+  rm -rf "$FIXTURE"
+}
+
+test_semantic_inspection_failure_is_fail_closed() {
+  new_launch_fixture
+  init_launch_channel semantic-inspection-failure
+  printf 'review while the channel is valid' > "$FIXTURE/task"
+  bash "$AC" send --channel semantic-inspection-failure --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+
+  FAKE_ARGS="$FIXTURE/semantic-inspection-failure.args" \
+    FAKE_STDIN="$FIXTURE/semantic-inspection-failure.stdin" \
+    FAKE_SLEEP=10 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel semantic-inspection-failure --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" >/dev/null 2>&1 &
+  local launcher_pid=$! attempts=0
+  while [ ! -f "$FIXTURE/semantic-inspection-failure.args" ] &&
+      [ "$attempts" -lt 100 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  printf 'damaged channel tail\n' >> "$COMMS/semantic-inspection-failure.md"
+  wait "$launcher_pid"
+  assert_eq "$?" "70"
+  rm -rf "$FIXTURE"
+}
+
 test_sanitized_activity_sampling() {
   new_launch_fixture
   init_launch_channel activity --heartbeat-after 1 --heartbeat-interval 1
@@ -573,6 +673,10 @@ else
   test_launch_adapters
   test_activity_setup_and_flag_validation
   test_heartbeat_and_lifecycle
+  test_semantic_progress_timeout_is_enforced
+  test_semantic_progress_resets_timeout
+  test_semantic_timeout_pauses_without_floor
+  test_semantic_inspection_failure_is_fail_closed
   test_sanitized_activity_sampling
   test_activity_generation_fencing
   test_activity_write_failure_is_fail_open

@@ -115,15 +115,19 @@ sub init_metadata {
         $frame->{kind} eq "control" && $frame->{tag} eq "hello" && $frame->{seq} == 1;
     my %metadata;
     for my $line (split(/\n/, $frame->{block})) {
-        next unless $line =~ /^(driver|peer|release|digest|protocol|release_root|progress_frames|progress_bytes|heartbeat_after|heartbeat_interval)=(.*)$/;
+        next unless $line =~ /^(driver|peer|release|digest|protocol|release_root|progress_frames|progress_bytes|heartbeat_after|heartbeat_interval|semantic_timeout)=(.*)$/;
         $metadata{$1} = $2;
     }
-    for my $key (qw(driver peer release digest protocol release_root progress_frames progress_bytes heartbeat_after heartbeat_interval)) {
+    for my $key (qw(driver peer release digest protocol release_root progress_frames progress_bytes heartbeat_after heartbeat_interval semantic_timeout)) {
         fail("hello missing $key") unless defined $metadata{$key} && length($metadata{$key});
     }
     for my $key (qw(progress_frames progress_bytes heartbeat_after heartbeat_interval)) {
         fail("hello has invalid $key") unless $metadata{$key} =~ /^\d+$/ && $metadata{$key} > 0;
     }
+    fail("hello has invalid semantic_timeout") unless
+        $metadata{semantic_timeout} =~ /^\d+$/ &&
+        $metadata{semantic_timeout} > 0 &&
+        $metadata{semantic_timeout} <= 300;
     fail("hello sender does not match driver") unless $frame->{sender} eq $metadata{driver};
     return \%metadata;
 }
@@ -136,6 +140,10 @@ sub state_from_frames {
         $metadata->{driver} => 1,
         $metadata->{peer} => 1,
     );
+    my %message_seq = (
+        $metadata->{driver} => 0,
+        $metadata->{peer} => 0,
+    );
     my $state = {
         %$metadata,
         session => $frames->[0]{session},
@@ -143,6 +151,7 @@ sub state_from_frames {
         turn => 1,
         terminal => 0,
         generation => \%generation,
+        message_seq => \%message_seq,
         seq => 0,
     };
     my $next_seq = 1;
@@ -234,6 +243,7 @@ sub apply_frame {
             $frame->{sender} eq $session->{expected};
         fail("turn sequence violation: expected turn $session->{turn}") unless
             $frame->{turn} == $session->{turn};
+        $session->{message_seq}{$frame->{sender}} = $frame->{seq};
         if ($frame->{state} eq "over") {
             $session->{expected} = other_participant($session, $frame->{sender});
             $session->{turn}++;
@@ -260,6 +270,7 @@ sub apply_frame {
         fail("replacement generation must increment by one") unless
             $generation == $session->{generation}{$role} + 1;
         $session->{generation}{$role} = $generation;
+        $session->{message_seq}{$role} = 0;
     }
 }
 
@@ -315,6 +326,7 @@ sub cmd_init {
     my (@argv) = @_;
     my ($file, $session, $driver, $peer, $release, $digest, $protocol, $release_root);
     my ($progress_frames, $progress_bytes, $heartbeat_after, $heartbeat_interval) = (4, 512, 30, 30);
+    my $semantic_timeout = 300;
     GetOptionsFromArray(
         \@argv,
         "file=s" => \$file,
@@ -329,6 +341,7 @@ sub cmd_init {
         "progress-bytes=i" => \$progress_bytes,
         "heartbeat-after=i" => \$heartbeat_after,
         "heartbeat-interval=i" => \$heartbeat_interval,
+        "semantic-timeout=i" => \$semantic_timeout,
     ) or fail("bad init arguments");
     fail("missing init argument") unless
         defined $file && valid_name($session) && valid_name($driver) && valid_name($peer) &&
@@ -339,6 +352,8 @@ sub cmd_init {
     fail("progress and heartbeat limits must be positive") unless
         $progress_frames > 0 && $progress_bytes > 0 &&
         $heartbeat_after > 0 && $heartbeat_interval > 0;
+    fail("semantic timeout must be between 1 and 300 seconds") unless
+        $semantic_timeout > 0 && $semantic_timeout <= 300;
     my ($fh, $existing) = open_locked($file);
     fail("session already exists") if length($existing);
     my $ts = timestamp();
@@ -353,6 +368,7 @@ sub cmd_init {
         "progress_bytes=$progress_bytes",
         "heartbeat_after=$heartbeat_after",
         "heartbeat_interval=$heartbeat_interval",
+        "semantic_timeout=$semantic_timeout",
     );
     my $frame = encode_frame(
         session => $session,
@@ -690,12 +706,15 @@ sub cmd_inspect {
     print "progress_bytes=$session->{progress_bytes}\n";
     print "heartbeat_after=$session->{heartbeat_after}\n";
     print "heartbeat_interval=$session->{heartbeat_interval}\n";
+    print "semantic_timeout=$session->{semantic_timeout}\n";
     print "terminal=" . ($session->{terminal} ? 1 : 0) . "\n";
     print "expected=$session->{expected}\n";
     print "turn=$session->{turn}\n";
     print "seq=$session->{seq}\n";
     print "generation.$session->{driver}=$session->{generation}{$session->{driver}}\n";
     print "generation.$session->{peer}=$session->{generation}{$session->{peer}}\n";
+    print "message_seq.$session->{driver}=$session->{message_seq}{$session->{driver}}\n";
+    print "message_seq.$session->{peer}=$session->{message_seq}{$session->{peer}}\n";
 }
 
 sub cursor_offset {

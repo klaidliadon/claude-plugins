@@ -88,6 +88,45 @@ test_frame_roundtrip() {
   rm -rf "$FIXTURE"
 }
 
+test_semantic_timeout_metadata() {
+  new_fixture
+  perl "$PROTOCOL" init \
+    --file "$CHANNEL" \
+    --session session-1 \
+    --driver codex \
+    --peer claude \
+    --release 2.0.0 \
+    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --protocol 2 \
+    --release-root "$FIXTURE/release" \
+    --semantic-timeout 1
+  local state
+  state="$(perl "$PROTOCOL" inspect --file "$CHANNEL")"
+  assert_contains "$state" 'semantic_timeout=1'
+
+  assert_fail perl "$PROTOCOL" init \
+    --file "$FIXTURE/zero.md" \
+    --session zero \
+    --driver codex \
+    --peer claude \
+    --release 2.0.0 \
+    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --protocol 2 \
+    --release-root "$FIXTURE/release" \
+    --semantic-timeout 0
+  assert_fail perl "$PROTOCOL" init \
+    --file "$FIXTURE/too-long.md" \
+    --session too-long \
+    --driver codex \
+    --peer claude \
+    --release 2.0.0 \
+    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --protocol 2 \
+    --release-root "$FIXTURE/release" \
+    --semantic-timeout 301
+  rm -rf "$FIXTURE"
+}
+
 test_turn_state_machine() {
   new_fixture
   init_fixture
@@ -530,6 +569,7 @@ if [ $# -gt 0 ]; then
   "$1"
 else
   test_frame_roundtrip
+  test_semantic_timeout_metadata
   test_turn_state_machine
   test_recv_coalesces_complete_turn
   test_recv_silence_ignores_old_frames
