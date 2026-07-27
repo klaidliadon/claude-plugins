@@ -72,6 +72,14 @@ if [ -n "${FAKE_STDOUT_SECOND_FILE:-}" ]; then
   sleep "${FAKE_STDOUT_GAP:-1.5}"
   cat "$FAKE_STDOUT_SECOND_FILE"
 fi
+if [ -n "${FAKE_WAIT_FOR_HEARTBEAT:-}" ]; then
+  attempts=0
+  while ! grep -q 'tag=alive' "$FAKE_WAIT_FOR_HEARTBEAT" &&
+      [ "$attempts" -lt 100 ]; do
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+fi
 sleep "${FAKE_SLEEP:-0}"
 exit "${FAKE_EXIT:-0}"
 EOF
@@ -353,7 +361,7 @@ test_heartbeat_and_lifecycle() {
   bash "$AC" send --channel heartbeat --root "$WORK_ROOT" --dir "$COMMS" --from codex --generation 1 \
     --body-file "$FIXTURE/task"
   FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" \
-    FAKE_SLEEP=3 PATH="$FAKEBIN:$PATH" \
+    FAKE_WAIT_FOR_HEARTBEAT="$COMMS/heartbeat.md" PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel heartbeat \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.2 \
     --root "$WORK_ROOT" --dir "$COMMS"
