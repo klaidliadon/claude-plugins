@@ -127,7 +127,7 @@ sub init_metadata {
     fail("hello has invalid semantic_timeout") unless
         $metadata{semantic_timeout} =~ /^\d+$/ &&
         $metadata{semantic_timeout} > 0 &&
-        $metadata{semantic_timeout} <= 300;
+        $metadata{semantic_timeout} <= 3600;
     fail("hello sender does not match driver") unless $frame->{sender} eq $metadata{driver};
     return \%metadata;
 }
@@ -325,7 +325,7 @@ sub read_locked {
 sub cmd_init {
     my (@argv) = @_;
     my ($file, $session, $driver, $peer, $release, $digest, $protocol, $release_root);
-    my ($progress_frames, $progress_bytes, $heartbeat_after, $heartbeat_interval) = (4, 512, 30, 30);
+    my ($progress_frames, $progress_bytes, $heartbeat_after, $heartbeat_interval) = (8, 512, 30, 30);
     my $semantic_timeout = 300;
     GetOptionsFromArray(
         \@argv,
@@ -352,8 +352,8 @@ sub cmd_init {
     fail("progress and heartbeat limits must be positive") unless
         $progress_frames > 0 && $progress_bytes > 0 &&
         $heartbeat_after > 0 && $heartbeat_interval > 0;
-    fail("semantic timeout must be between 1 and 300 seconds") unless
-        $semantic_timeout > 0 && $semantic_timeout <= 300;
+    fail("semantic timeout must be between 1 and 3600 seconds") unless
+        $semantic_timeout > 0 && $semantic_timeout <= 3600;
     my ($fh, $existing) = open_locked($file);
     fail("session already exists") if length($existing);
     my $ts = timestamp();
@@ -450,6 +450,7 @@ sub cmd_append {
 sub resume_body {
     my ($session, $frames, $replace, $new_generation, $handoff, $artifact_file) = @_;
     my $task = resume_task($session, $frames);
+    my $task_body = $task->{block};
     my $artifact_ref = "-";
     if (defined $artifact_file) {
         my $artifact_path = abs_path($artifact_file);
@@ -467,10 +468,13 @@ sub resume_body {
         "protocol=$session->{protocol}",
         "release_root=$session->{release_root}",
         "task_ref=$task->{sha256}",
+        "task_bytes=" . length($task_body),
         "artifact_ref=$artifact_ref",
-        "next_action=$handoff",
+        "next_action_bytes=" . length($handoff),
+        "task:",
     );
-    fail("resume packet exceeds 4096 bytes") if length($body) > 4096;
+    $body .= "\n$task_body\n---------- resume next-action ----------\nnext_action=$handoff";
+    fail("resume packet exceeds 65536 bytes") if length($body) > 65536;
     return $body;
 }
 
@@ -643,9 +647,18 @@ sub cmd_resume_packet {
     $body =~ s/^[^\n]*\n// or fail("resume packet has no body");
     $body =~ s/\n\z//;
     my ($packet_session, $packet_role, $packet_generation, $open_turn, $release,
-        $digest, $protocol, $release_root, $task_ref, $artifact_ref, $next_action) =
-        $body =~ /\Asession=([^\n]+)\nrole=([^\n]+)\ngeneration=(\d+)\nopen_turn=(\d+)\nrelease=([^\n]+)\ndigest=([0-9a-f]{64})\nprotocol=(\d+)\nrelease_root=([^\n]+)\ntask_ref=([^\n]+)\nartifact_ref=([^\n]+)\nnext_action=(.*)\z/s;
-    fail("malformed resume packet") unless defined $next_action;
+        $digest, $protocol, $release_root, $task_ref, $task_bytes, $artifact_ref,
+        $next_action_bytes, $payload) =
+        $body =~ /\Asession=([^\n]+)\nrole=([^\n]+)\ngeneration=(\d+)\nopen_turn=(\d+)\nrelease=([^\n]+)\ndigest=([0-9a-f]{64})\nprotocol=(\d+)\nrelease_root=([^\n]+)\ntask_ref=([^\n]+)\ntask_bytes=(\d+)\nartifact_ref=([^\n]+)\nnext_action_bytes=(\d+)\ntask:\n(.*)\z/s;
+    fail("malformed resume packet") unless defined $payload;
+    my $task_body = substr($payload, 0, $task_bytes, "");
+    my $separator = "\n---------- resume next-action ----------\nnext_action=";
+    fail("malformed resume packet task length") unless length($task_body) == $task_bytes;
+    fail("malformed resume packet separator") unless
+        substr($payload, 0, length($separator), "") eq $separator;
+    fail("malformed resume packet next action length") unless
+        length($payload) == $next_action_bytes;
+    my $next_action = $payload;
     fail("resume packet session mismatch") unless $packet_session eq $session->{session};
     fail("resume packet role mismatch") unless $packet_role eq $role;
     fail("resume packet generation mismatch") unless $packet_generation == $generation;
@@ -654,9 +667,11 @@ sub cmd_resume_packet {
     fail("resume packet digest mismatch") unless $digest eq $session->{digest};
     fail("resume packet protocol mismatch") unless $protocol == $session->{protocol};
     fail("resume packet release root mismatch") unless $release_root eq $session->{release_root};
+    my $task = resume_task($session, $frames);
     fail("resume packet task ref is invalid") unless
         $task_ref =~ /^[0-9a-f]{64}$/ &&
-        resume_task($session, $frames)->{sha256} eq $task_ref;
+        $task->{sha256} eq $task_ref &&
+        $task->{block} eq $task_body;
     if ($artifact_ref ne "-") {
         my ($artifact_path, $artifact_digest) =
             $artifact_ref =~ /\A(.+)\@([0-9a-f]{64})\z/s;
@@ -669,7 +684,26 @@ sub cmd_resume_packet {
             sha256_hex(read_body($canonical_artifact)) eq $artifact_digest;
     }
     fail("resume packet next action is empty") unless length($next_action);
-    print "$body\n";
+    print join("\n",
+        "session=$packet_session",
+        "role=$packet_role",
+        "generation=$packet_generation",
+        "open_turn=$open_turn",
+        "release=$release",
+        "digest=$digest",
+        "protocol=$protocol",
+        "release_root=$release_root",
+        "task_ref=$task_ref",
+        "artifact_ref=$artifact_ref",
+        "",
+        "## Original task",
+        "",
+        $task_body,
+        "## Next action",
+        "",
+        $next_action,
+        "",
+    );
 }
 
 sub cmd_transcript {

@@ -9,9 +9,11 @@ source "$DIR/test/testlib.sh"
 new_launch_fixture() {
   FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-launch.XXXXXX")"
   COMMS="$FIXTURE/comms"
+  WORK_ROOT="$FIXTURE/work"
   FAKEBIN="$FIXTURE/bin"
   RELEASE_ROOT="$FIXTURE/cache/2.0.0"
-  mkdir -p "$COMMS" "$FAKEBIN" "$(dirname "$RELEASE_ROOT")"
+  mkdir -p "$COMMS" "$WORK_ROOT" "$FAKEBIN" "$(dirname "$RELEASE_ROOT")"
+  WORK_ROOT="$(realpath "$WORK_ROOT")"
   cp -R "$DIR" "$RELEASE_ROOT"
   RELEASE_ROOT="$(realpath "$RELEASE_ROOT")"
   perl -pi -e 's/"version": "1\.3\.4"/"version": "2.0.0"/' \
@@ -47,6 +49,24 @@ if [ "${1:-}" = "--help" ]; then
 fi
 printf '%s\n' "$@" > "$FAKE_ARGS"
 cat > "$FAKE_STDIN"
+if [ -n "${FAKE_ENV_FILE:-}" ]; then
+  printf 'BASH_DEFAULT_TIMEOUT_MS=%s\nBASH_MAX_TIMEOUT_MS=%s\n' \
+    "${BASH_DEFAULT_TIMEOUT_MS:-}" "${BASH_MAX_TIMEOUT_MS:-}" > "$FAKE_ENV_FILE"
+fi
+if [ -n "${FAKE_RUN_CHECKPOINT:-}" ]; then
+  checkpoint="$(awk '
+    /^Mandatory checkpoint command:/ {
+      getline
+      getline
+      sub(/^    /, "")
+      print
+      exit
+    }
+  ' "$FAKE_STDIN")"
+  [ -n "$checkpoint" ] || exit 98
+  sleep "${FAKE_CHECKPOINT_DELAY:-0}"
+  bash -c "$checkpoint"
+fi
 if [ -n "${FAKE_STDOUT_FILE:-}" ]; then
   cat "$FAKE_STDOUT_FILE"
 fi
@@ -95,7 +115,7 @@ EOF
 init_launch_channel() {
   local channel="$1"
   shift
-  bash "$AC" init --channel "$channel" --dir "$COMMS" --session "$channel" \
+  bash "$AC" init --channel "$channel" --root "$WORK_ROOT" --dir "$COMMS" --session "$channel" \
     --driver codex --peer claude --release 2.0.0 \
     --digest "$RELEASE_DIGEST" \
     --protocol 2 --release-root "$RELEASE_ROOT" "$@"
@@ -104,27 +124,31 @@ init_launch_channel() {
 test_launch_adapters() {
   new_launch_fixture
   init_launch_channel claude-launch
-  FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" PATH="$FAKEBIN:$PATH" \
+  FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" \
+    FAKE_ENV_FILE="$FIXTURE/claude.env" PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel claude-launch \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" -- --model sonnet
+    --root "$WORK_ROOT" --dir "$COMMS" -- --model sonnet
   assert_ok bash "$AC" wait-ready --channel claude-launch --me codex \
-    --peer claude --generation 1 --timeout 1 --dir "$COMMS"
+    --peer claude --generation 1 --timeout 1 --root "$WORK_ROOT" --dir "$COMMS"
 
   init_launch_channel codex-launch
   printf 'ready' > "$FIXTURE/ready"
   perl "$PROTOCOL" append --file "$COMMS/codex-launch.md" --sender claude --generation 1 \
-    --kind control --state none --tag=hello-ack=claude.1 --body-file "$FIXTURE/ready"
+    --kind control --state none --tag=launcher-ready=claude.1 --body-file "$FIXTURE/ready"
   FAKE_ARGS="$FIXTURE/codex.args" FAKE_STDIN="$FIXTURE/codex.stdin" PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch codex --role driver --peer claude --channel codex-launch \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" -- --model gpt-5
+    --root "$WORK_ROOT" --dir "$COMMS" -- --model gpt-5
 
-  local claude_args codex_args claude_input codex_input comms_arg comms_physical
+  local claude_args claude_env codex_args claude_input codex_input comms_arg
+  local comms_physical checkpoint_count phase_checkpoint_count third_line
   claude_args="$(cat "$FIXTURE/claude.args")"
+  claude_env="$(cat "$FIXTURE/claude.env")"
   codex_args="$(cat "$FIXTURE/codex.args")"
   claude_input="$(cat "$FIXTURE/claude.stdin")"
   codex_input="$(cat "$FIXTURE/codex.stdin")"
+  third_line="$(sed -n '3p' "$FIXTURE/claude.stdin")"
   comms_arg="$(cd "$COMMS" && pwd)"
   comms_physical="$(cd "$COMMS" && pwd -P)"
   assert_contains "$claude_args" '-p'
@@ -134,7 +158,10 @@ test_launch_adapters() {
   assert_contains "$claude_args" 'stream-json'
   assert_contains "$claude_args" '--verbose'
   assert_contains "$claude_args" "$comms_arg"
+  assert_contains "$claude_args" "$WORK_ROOT"
   assert_contains "$claude_args" '--model'
+  assert_contains "$claude_env" 'BASH_DEFAULT_TIMEOUT_MS=600000'
+  assert_contains "$claude_env" 'BASH_MAX_TIMEOUT_MS=600000'
   assert_not_contains "$claude_args" '--channel'
   assert_contains "$codex_args" 'exec'
   assert_contains "$codex_args" '--dangerously-bypass-approvals-and-sandbox'
@@ -145,11 +172,18 @@ test_launch_adapters() {
   assert_contains "$claude_input" 'review the current branch'
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms send --channel claude-launch"
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms recv --channel claude-launch"
+  assert_contains "$claude_input" 'Mandatory checkpoint command'
+  assert_contains "$claude_input" 'Reusable checkpoint command'
+  assert_contains "$claude_input" '.phase-checkpoint.claude.1.'
+  assert_not_contains "$claude_input" 'checkpoint; phase complete; next=continue'
+  assert_eq "$third_line" '## Mandatory first tool call'
   assert_contains "$claude_input" 'Your first transport action is receive'
+  assert_contains "$claude_input" 'Before reading or inspecting any file'
   assert_contains "$claude_input" 'Run receive synchronously in the foreground'
   assert_contains "$claude_input" 'Never background receive or return a final answer'
-  assert_contains "$claude_input" 'after a major phase or 2 minutes, whichever comes first'
-  assert_contains "$claude_input" 'Never exceed 5 minutes without semantic progress'
+  assert_contains "$claude_input" 'After repository inspection'
+  assert_contains "$claude_input" 'After each commit'
+  assert_not_contains "$claude_input" '2 minutes'
   assert_contains "$claude_input" 'Keep progress bodies at or below 256 bytes'
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms send --channel codex-launch"
   assert_contains "$codex_input" "$RELEASE_ROOT/bin/agent-comms recv --channel codex-launch"
@@ -158,6 +192,45 @@ test_launch_adapters() {
     "activity_ref=$comms_physical/.activity/claude-launch/claude.1.log"
   assert_contains "$(cat "$COMMS/codex-launch.md")" \
     "activity_ref=$comms_physical/.activity/codex-launch/codex.1.log"
+  checkpoint_count="$(find "$COMMS" -maxdepth 1 -name '.checkpoint.*' -print | wc -l | tr -d ' ')"
+  assert_eq "$checkpoint_count" "0"
+  phase_checkpoint_count="$(find "$COMMS" -maxdepth 1 -name '.phase-checkpoint.*' -print | wc -l | tr -d ' ')"
+  assert_eq "$phase_checkpoint_count" "0"
+  rm -rf "$FIXTURE"
+}
+
+test_launch_requires_work_root() {
+  new_launch_fixture
+  init_launch_channel missing-work-root
+  local output
+  output="$(FAKE_ARGS="$FIXTURE/missing-root.args" \
+    FAKE_STDIN="$FIXTURE/missing-root.stdin" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel missing-work-root --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'launch requires --root'
+  assert_fail test -e "$FIXTURE/missing-root.args"
+  rm -rf "$FIXTURE"
+}
+
+test_claude_rejects_channel_under_config_root() {
+  new_launch_fixture
+  local config_root="$FIXTURE/claude-config" output
+  COMMS="$config_root/channels"
+  mkdir -p "$COMMS"
+  init_launch_channel protected-channel
+  output="$(FAKE_ARGS="$FIXTURE/protected.args" \
+    FAKE_STDIN="$FIXTURE/protected.stdin" PATH="$FAKEBIN:$PATH" \
+    CLAUDE_CONFIG_DIR="$config_root" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel protected-channel --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'choose --dir outside it'
+  assert_fail test -e "$FIXTURE/protected.args"
   rm -rf "$FIXTURE"
 }
 
@@ -168,7 +241,7 @@ test_activity_setup_and_flag_validation() {
     PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel activity-setup \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS"
+    --root "$WORK_ROOT" --dir "$COMMS"
 
   local activity activity_dir directory_mode file_mode output raw
   activity_dir="$(cd "$COMMS" && pwd -P)/.activity/activity-setup"
@@ -185,13 +258,13 @@ test_activity_setup_and_flag_validation() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel claude-output-conflict --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" -- --output-format text 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" -- --output-format text 2>&1)"
   assert_eq "$?" "64"
   assert_contains "$output" 'runtime output flag is owned by agent-comms'
   assert_fail test -e "$FIXTURE/conflict-claude.args"
   raw="$(cat "$COMMS/claude-output-conflict.md")"
-  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
-  assert_not_contains "$raw" 'tag=started'
+  assert_not_contains "$raw" 'tag=launcher-ready=claude.1'
+  assert_not_contains "$raw" 'tag=launching'
 
   init_launch_channel codex-output-conflict
   output="$(FAKE_ARGS="$FIXTURE/conflict-codex.args" \
@@ -200,12 +273,12 @@ test_activity_setup_and_flag_validation() {
     bash "$AC" launch codex --role driver --peer claude \
     --channel codex-output-conflict --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" -- --json 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" -- --json 2>&1)"
   assert_eq "$?" "64"
   assert_contains "$output" 'runtime output flag is owned by agent-comms'
   assert_fail test -e "$FIXTURE/conflict-codex.args"
   raw="$(cat "$COMMS/codex-output-conflict.md")"
-  assert_not_contains "$raw" 'tag=started'
+  assert_not_contains "$raw" 'tag=launching'
 
   init_launch_channel missing-output-capability
   output="$(FAKE_ARGS="$FIXTURE/missing.args" FAKE_STDIN="$FIXTURE/missing.stdin" \
@@ -213,13 +286,13 @@ test_activity_setup_and_flag_validation() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel missing-output-capability --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
   assert_eq "$?" "64"
   assert_contains "$output" 'claude adapter is missing --output-format'
   assert_fail test -e "$FIXTURE/missing.args"
   raw="$(cat "$COMMS/missing-output-capability.md")"
-  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
-  assert_not_contains "$raw" 'tag=started'
+  assert_not_contains "$raw" 'tag=launcher-ready=claude.1'
+  assert_not_contains "$raw" 'tag=launching'
   rm -rf "$FIXTURE"
 }
 
@@ -228,13 +301,13 @@ test_heartbeat_and_lifecycle() {
   init_launch_channel heartbeat --heartbeat-after 1 --heartbeat-interval 1
   printf 'task' > "$FIXTURE/task"
   printf 'result' > "$FIXTURE/result"
-  bash "$AC" send --channel heartbeat --dir "$COMMS" --from codex --generation 1 \
+  bash "$AC" send --channel heartbeat --root "$WORK_ROOT" --dir "$COMMS" --from codex --generation 1 \
     --body-file "$FIXTURE/task"
   FAKE_ARGS="$FIXTURE/claude.args" FAKE_STDIN="$FIXTURE/claude.stdin" \
     FAKE_SLEEP=3 PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel heartbeat \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS"
+    --root "$WORK_ROOT" --dir "$COMMS"
 
   local raw heartbeat_count received
   raw="$(cat "$COMMS/heartbeat.md")"
@@ -246,9 +319,9 @@ test_heartbeat_and_lifecycle() {
     echo "FAIL: unexpected heartbeat count: $heartbeat_count"
     FAILS=$((FAILS+1))
   fi
-  bash "$AC" send --channel heartbeat --dir "$COMMS" --from claude --generation 1 \
+  bash "$AC" send --channel heartbeat --root "$WORK_ROOT" --dir "$COMMS" --from claude --generation 1 \
     --body-file "$FIXTURE/result"
-  received="$(bash "$AC" recv --channel heartbeat --dir "$COMMS" --me codex \
+  received="$(bash "$AC" recv --channel heartbeat --root "$WORK_ROOT" --dir "$COMMS" --me codex \
     --generation 1 --silence-seconds 1 --turn-seconds 2)"
   assert_contains "$received" 'result'
   assert_not_contains "$received" 'alive'
@@ -258,7 +331,7 @@ test_heartbeat_and_lifecycle() {
     FAKE_EXIT=7 PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel failed-child \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
   assert_eq "$?" "7"
   assert_contains "$(cat "$COMMS/failed-child.md")" 'tag=exit=7'
   rm -rf "$FIXTURE"
@@ -269,7 +342,7 @@ test_semantic_progress_timeout_is_enforced() {
   init_launch_channel semantic-timeout \
     --heartbeat-after 1 --heartbeat-interval 1 --semantic-timeout 1
   printf 'review without going silent' > "$FIXTURE/task"
-  bash "$AC" send --channel semantic-timeout --dir "$COMMS" \
+  bash "$AC" send --channel semantic-timeout --root "$WORK_ROOT" --dir "$COMMS" \
     --from codex --generation 1 --body-file "$FIXTURE/task"
 
   FAKE_ARGS="$FIXTURE/semantic-timeout.args" \
@@ -278,7 +351,7 @@ test_semantic_progress_timeout_is_enforced() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel semantic-timeout --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
   assert_eq "$?" "124"
   local raw
   raw="$(cat "$COMMS/semantic-timeout.md")"
@@ -289,32 +362,24 @@ test_semantic_progress_timeout_is_enforced() {
 
 test_semantic_progress_resets_timeout() {
   new_launch_fixture
-  init_launch_channel semantic-progress --semantic-timeout 1
+  init_launch_channel semantic-progress --semantic-timeout 2
   printf 'review with a checkpoint' > "$FIXTURE/task"
-  printf 'phase complete; inspecting the next invariant' > "$FIXTURE/progress"
-  bash "$AC" send --channel semantic-progress --dir "$COMMS" \
+  bash "$AC" send --channel semantic-progress --root "$WORK_ROOT" --dir "$COMMS" \
     --from codex --generation 1 --body-file "$FIXTURE/task"
 
   FAKE_ARGS="$FIXTURE/semantic-progress.args" \
     FAKE_STDIN="$FIXTURE/semantic-progress.stdin" \
+    FAKE_RUN_CHECKPOINT=1 FAKE_CHECKPOINT_DELAY=1.2 \
     FAKE_SLEEP=1.5 FAKE_EXIT=7 PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel semantic-progress --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1 &
-  local launcher_pid=$! attempts=0
-  while [ ! -f "$FIXTURE/semantic-progress.args" ] && [ "$attempts" -lt 100 ]; do
-    sleep 0.05
-    attempts=$((attempts + 1))
-  done
-  sleep 0.2
-  bash "$AC" send --channel semantic-progress --dir "$COMMS" \
-    --from claude --generation 1 --continue --body-file "$FIXTURE/progress"
-  wait "$launcher_pid"
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
   assert_eq "$?" "7"
   local raw
   raw="$(cat "$COMMS/semantic-progress.md")"
   assert_not_contains "$raw" 'tag=semantic-timeout'
+  assert_contains "$raw" 'started; task accepted; next=inspect'
   assert_contains "$raw" 'tag=exit=7'
   rm -rf "$FIXTURE"
 }
@@ -329,7 +394,7 @@ test_semantic_timeout_pauses_without_floor() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel semantic-waiting --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
   assert_eq "$?" "7"
   local raw
   raw="$(cat "$COMMS/semantic-waiting.md")"
@@ -342,7 +407,7 @@ test_semantic_inspection_failure_is_fail_closed() {
   new_launch_fixture
   init_launch_channel semantic-inspection-failure
   printf 'review while the channel is valid' > "$FIXTURE/task"
-  bash "$AC" send --channel semantic-inspection-failure --dir "$COMMS" \
+  bash "$AC" send --channel semantic-inspection-failure --root "$WORK_ROOT" --dir "$COMMS" \
     --from codex --generation 1 --body-file "$FIXTURE/task"
 
   FAKE_ARGS="$FIXTURE/semantic-inspection-failure.args" \
@@ -351,7 +416,7 @@ test_semantic_inspection_failure_is_fail_closed() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel semantic-inspection-failure --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1 &
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
   local launcher_pid=$! attempts=0
   while [ ! -f "$FIXTURE/semantic-inspection-failure.args" ] &&
       [ "$attempts" -lt 100 ]; do
@@ -374,7 +439,7 @@ test_sanitized_activity_sampling() {
     > "$FIXTURE/first.jsonl"
   printf '%s\n' '{"type":"result","secret":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
     > "$FIXTURE/second.jsonl"
-  bash "$AC" send --channel activity --dir "$COMMS" --from codex --generation 1 \
+  bash "$AC" send --channel activity --root "$WORK_ROOT" --dir "$COMMS" --from codex --generation 1 \
     --body-file "$FIXTURE/task"
   FAKE_ARGS="$FIXTURE/activity.args" FAKE_STDIN="$FIXTURE/activity.stdin" \
     FAKE_STDOUT_FILE="$FIXTURE/first.jsonl" \
@@ -382,7 +447,7 @@ test_sanitized_activity_sampling() {
     FAKE_SLEEP=2 FAKE_DATE_COUNTER="$FIXTURE/date.counter" PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel activity \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS"
+    --root "$WORK_ROOT" --dir "$COMMS"
 
   local activity_dir activity raw feed tick_count spool_count
   activity_dir="$(cd "$COMMS" && pwd -P)/.activity/activity"
@@ -410,15 +475,15 @@ test_activity_generation_fencing() {
   printf 'review activity' > "$FIXTURE/task"
   printf 'resume activity review' > "$FIXTURE/handoff"
   printf '%s\n' '{"type":"tool","text":"generation activity"}' > "$FIXTURE/output.jsonl"
-  bash "$AC" send --channel activity-resume --dir "$COMMS" \
+  bash "$AC" send --channel activity-resume --root "$WORK_ROOT" --dir "$COMMS" \
     --from codex --generation 1 --body-file "$FIXTURE/task"
   FAKE_ARGS="$FIXTURE/generation-1.args" FAKE_STDIN="$FIXTURE/generation-1.stdin" \
     FAKE_STDOUT_FILE="$FIXTURE/output.jsonl" FAKE_SLEEP=2 \
     FAKE_DATE_COUNTER="$FIXTURE/date-1.counter" PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel activity-resume \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS"
-  bash "$AC" resume --channel activity-resume --dir "$COMMS" \
+    --root "$WORK_ROOT" --dir "$COMMS"
+  bash "$AC" resume --channel activity-resume --root "$WORK_ROOT" --dir "$COMMS" \
     --from codex --generation 1 --replace claude \
     --body-file "$FIXTURE/handoff"
   FAKE_ARGS="$FIXTURE/generation-2.args" FAKE_STDIN="$FIXTURE/generation-2.stdin" \
@@ -426,7 +491,7 @@ test_activity_generation_fencing() {
     FAKE_DATE_COUNTER="$FIXTURE/date-2.counter" PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel activity-resume \
     --generation 2 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS"
+    --root "$WORK_ROOT" --dir "$COMMS"
 
   local activity_dir first second
   activity_dir="$(cd "$COMMS" && pwd -P)/.activity/activity-resume"
@@ -446,7 +511,7 @@ test_activity_write_failure_is_fail_open() {
   init_launch_channel activity-write-failure --heartbeat-after 1 --heartbeat-interval 1
   printf 'review activity' > "$FIXTURE/task"
   printf '%s\n' '{"type":"tool","text":"activity"}' > "$FIXTURE/output.jsonl"
-  bash "$AC" send --channel activity-write-failure --dir "$COMMS" \
+  bash "$AC" send --channel activity-write-failure --root "$WORK_ROOT" --dir "$COMMS" \
     --from codex --generation 1 --body-file "$FIXTURE/task"
   FAKE_ARGS="$FIXTURE/write-failure.args" \
     FAKE_STDIN="$FIXTURE/write-failure.stdin" \
@@ -455,7 +520,7 @@ test_activity_write_failure_is_fail_open() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel activity-write-failure --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1 &
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
   local launcher_pid=$! activity attempts=0
   activity="$(cd "$COMMS" && pwd -P)/.activity/activity-write-failure/claude.1.log"
   while [ ! -f "$activity" ] && [ "$attempts" -lt 100 ]; do
@@ -479,7 +544,7 @@ test_activity_sampler_death_is_fail_open() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel activity-sampler-death --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1 &
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
   local launcher_pid=$! heartbeat_pid attempts=0
   while [ ! -f "$FIXTURE/sampler-death.args" ] && [ "$attempts" -lt 100 ]; do
     sleep 0.05
@@ -506,7 +571,7 @@ test_activity_shutdown_is_bounded() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel activity-bounded-shutdown --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1 &
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
   local launcher_pid=$! heartbeat_pid watchdog_pid attempts=0
   while [ ! -f "$FIXTURE/bounded.args" ] && [ "$attempts" -lt 100 ]; do
     sleep 0.05
@@ -544,13 +609,13 @@ test_activity_rejects_symlink_paths() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel activity-root-symlink --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
   assert_eq "$?" "64"
   assert_contains "$output" 'activity path is a symlink'
   assert_fail test -e "$FIXTURE/root-symlink.args"
   raw="$(cat "$COMMS/activity-root-symlink.md")"
-  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
-  assert_not_contains "$raw" 'tag=started'
+  assert_not_contains "$raw" 'tag=launcher-ready=claude.1'
+  assert_not_contains "$raw" 'tag=launching'
 
   rm "$COMMS/.activity"
   mkdir "$COMMS/.activity"
@@ -562,13 +627,13 @@ test_activity_rejects_symlink_paths() {
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel activity-channel-symlink --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
   assert_eq "$?" "64"
   assert_contains "$output" 'activity path is a symlink'
   assert_fail test -e "$FIXTURE/channel-symlink.args"
   raw="$(cat "$COMMS/activity-channel-symlink.md")"
-  assert_not_contains "$raw" 'tag=hello-ack=claude.1'
-  assert_not_contains "$raw" 'tag=started'
+  assert_not_contains "$raw" 'tag=launcher-ready=claude.1'
+  assert_not_contains "$raw" 'tag=launching'
   rm -rf "$FIXTURE"
 }
 
@@ -579,7 +644,7 @@ test_heartbeat_requires_open_turn() {
     FAKE_SLEEP=3 PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel waiting \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS"
+    --root "$WORK_ROOT" --dir "$COMMS"
 
   local raw
   raw="$(cat "$COMMS/waiting.md")"
@@ -595,7 +660,7 @@ test_startup_timeout_is_visible() {
     PATH="$FAKEBIN:$PATH" AGENT_COMMS_STARTUP_TIMEOUT=0.1 \
     bash "$AC" launch codex --role driver --peer claude --channel startup-timeout \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
   assert_eq "$?" "2"
   assert_contains "$(cat "$COMMS/startup-timeout.md")" 'tag=startup-timeout'
   assert_fail test -e "$FIXTURE/codex.args"
@@ -613,7 +678,7 @@ test_launch_rejects_pinned_digest_before_model() {
     PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel bad-digest \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
   assert_eq "$?" "1"
   assert_contains "$output" 'pinned release identity mismatch'
   assert_fail test -e "$FIXTURE/claude.args"
@@ -626,9 +691,9 @@ test_launch_rejects_changed_resume_artifact_before_ready() {
   printf 'task' > "$FIXTURE/task"
   printf 'resume the interrupted review' > "$FIXTURE/handoff"
   printf 'original artifact' > "$FIXTURE/artifact"
-  bash "$AC" send --channel bad-resume --dir "$COMMS" --from codex --generation 1 \
+  bash "$AC" send --channel bad-resume --root "$WORK_ROOT" --dir "$COMMS" --from codex --generation 1 \
     --body-file "$FIXTURE/task"
-  bash "$AC" resume --channel bad-resume --dir "$COMMS" --from codex --generation 1 \
+  bash "$AC" resume --channel bad-resume --root "$WORK_ROOT" --dir "$COMMS" --from codex --generation 1 \
     --replace claude --body-file "$FIXTURE/handoff" --artifact-file "$FIXTURE/artifact"
   printf 'changed artifact' > "$FIXTURE/artifact"
 
@@ -637,13 +702,13 @@ test_launch_rejects_changed_resume_artifact_before_ready() {
     PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel bad-resume \
     --generation 2 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" 2>&1)"
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
   assert_eq "$?" "1"
   assert_contains "$output" 'resume packet artifact digest mismatch'
   assert_fail test -e "$FIXTURE/claude.args"
   raw="$(cat "$COMMS/bad-resume.md")"
   assert_contains "$raw" 'tag=resume-invalid'
-  assert_not_contains "$raw" 'tag=hello-ack=claude.2'
+  assert_not_contains "$raw" 'tag=launcher-ready=claude.2'
   rm -rf "$FIXTURE"
 }
 
@@ -654,7 +719,7 @@ test_signal_is_forwarded_and_visible() {
     FAKE_SLEEP=5 PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex --channel signal \
     --generation 1 --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
-    --dir "$COMMS" >/dev/null 2>&1 &
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
   local launcher_pid=$! attempts=0
   while [ ! -f "$FIXTURE/claude.args" ] && [ "$attempts" -lt 100 ]; do
     sleep 0.05
@@ -671,6 +736,8 @@ if [ $# -gt 0 ]; then
   "$1"
 else
   test_launch_adapters
+  test_launch_requires_work_root
+  test_claude_rejects_channel_under_config_root
   test_activity_setup_and_flag_validation
   test_heartbeat_and_lifecycle
   test_semantic_progress_timeout_is_enforced

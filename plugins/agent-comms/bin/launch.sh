@@ -230,10 +230,8 @@ heartbeat_loop() {
       continue
     fi
     state="$(perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE")" || break
-    case "$state" in
-      *$'terminal=0\n'*$'expected='"$ME"$'\n'*) ;;
-      *) continue;;
-    esac
+    [ "$(state_value "$state" terminal)" = "0" ] || continue
+    [ "$(state_value "$state" expected)" = "$ME" ] || continue
     append_lifecycle alive \
       "elapsed=${elapsed}s activity_seq=$activity_seq activity_idle=$((now - activity_last_at))s"
     last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
@@ -271,6 +269,9 @@ valid_name "$PEER" || fail_launch "bad --peer"
 valid_name "$CHANNEL" || fail_launch "bad --channel"
 case "$GENERATION" in ''|*[!0-9]*) fail_launch "bad --generation";; esac
 [ -f "$PROMPT_FILE" ] || fail_launch "prompt file not found: $PROMPT_FILE"
+[ -n "${COMMS_ROOT_FLAG:-}" ] || fail_launch "launch requires --root <work-root>"
+[ -d "$COMMS_ROOT_FLAG" ] || fail_launch "work root not found: $COMMS_ROOT_FLAG"
+WORK_ROOT="$(realpath "$COMMS_ROOT_FLAG")"
 [ "$DECLARED_RELEASE" = "$CLIENT_RELEASE" ] ||
   fail_launch "client release mismatch: launcher=$CLIENT_RELEASE caller=${DECLARED_RELEASE:-missing}"
 if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
@@ -286,6 +287,15 @@ fi
 
 ME="$RUNTIME"
 COMMS_DIRECTORY="$(comms_dir)"
+if [ "$RUNTIME" = "claude" ]; then
+  CLAUDE_CONFIG_ROOT="$(realpath "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
+  COMMS_PHYSICAL="$(realpath "$COMMS_DIRECTORY")"
+  case "$COMMS_PHYSICAL/" in
+    "$CLAUDE_CONFIG_ROOT/"*)
+      fail_launch "Claude cannot write channels under $CLAUDE_CONFIG_ROOT; choose --dir outside it"
+      ;;
+  esac
+fi
 mkdir -p "$COMMS_DIRECTORY/.cursors/$CHANNEL"
 CHANNEL_FILE="$(channel_file "$CHANNEL")"
 assert_confined "$CHANNEL_FILE"
@@ -296,6 +306,8 @@ BOOTSTRAP_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-prompt.XXXXXX")"
 CONTROL_CURSOR="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-control.XXXXXX")"
 SUPERVISOR_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-supervisor.XXXXXX")"
 RESUME_PACKET_FILE=""
+CHECKPOINT_BODY_FILE=""
+PHASE_CHECKPOINT_BODY_FILE=""
 CHILD_PID=""
 HEARTBEAT_PID=""
 SUPERVISOR_PID=""
@@ -310,6 +322,12 @@ cleanup_launch() {
   rm -f "$METADATA_FILE" "$BOOTSTRAP_FILE" "$CONTROL_CURSOR" "$SUPERVISOR_STATE_FILE"
   if [ -n "$RESUME_PACKET_FILE" ]; then
     rm -f "$RESUME_PACKET_FILE"
+  fi
+  if [ -n "$CHECKPOINT_BODY_FILE" ]; then
+    rm -f "$CHECKPOINT_BODY_FILE"
+  fi
+  if [ -n "$PHASE_CHECKPOINT_BODY_FILE" ]; then
+    rm -f "$PHASE_CHECKPOINT_BODY_FILE"
   fi
   if [ -n "$ACTIVITY_SPOOL" ]; then
     rm -f "$ACTIVITY_SPOOL"
@@ -453,7 +471,7 @@ if [ "$ROLE" = "reviewer" ]; then
     --generation "$GENERATION" \
     --kind control \
     --state none \
-    --tag "hello-ack=$ME.$GENERATION" \
+    --tag "launcher-ready=$ME.$GENERATION" \
     --body-file "$READY_BODY"
   rm -f "$READY_BODY"
 else
@@ -462,7 +480,7 @@ else
       --file "$CHANNEL_FILE" \
       --cursor "$CONTROL_CURSOR" \
       --me "$ME" \
-      --tag "hello-ack=$PEER.$PEER_GENERATION" \
+      --tag "launcher-ready=$PEER.$PEER_GENERATION" \
       --timeout "${AGENT_COMMS_STARTUP_TIMEOUT:-30}" >/dev/null; then
     :
   else
@@ -477,24 +495,53 @@ render_command SEND_COMMAND "$PINNED_AC" send --channel "$CHANNEL" --dir "$COMMS
   --from "$ME" --generation "$GENERATION"
 render_command RECV_COMMAND "$PINNED_AC" recv --channel "$CHANNEL" --dir "$COMMS_DIRECTORY" \
   --me "$ME" --generation "$GENERATION"
+CHECKPOINT_BODY_FILE="$(mktemp "$COMMS_DIRECTORY/.checkpoint.$ME.$GENERATION.XXXXXX")"
+chmod 600 "$CHECKPOINT_BODY_FILE"
+if [ "$ROLE" = "reviewer" ]; then
+  printf 'started; task accepted; next=inspect' > "$CHECKPOINT_BODY_FILE"
+else
+  printf 'started; next=send task' > "$CHECKPOINT_BODY_FILE"
+fi
+render_command CHECKPOINT_COMMAND "$PINNED_AC" send --channel "$CHANNEL" \
+  --dir "$COMMS_DIRECTORY" --from "$ME" --generation "$GENERATION" \
+  --continue --body-file "$CHECKPOINT_BODY_FILE"
+PHASE_CHECKPOINT_BODY_FILE="$(mktemp "$COMMS_DIRECTORY/.phase-checkpoint.$ME.$GENERATION.XXXXXX")"
+chmod 600 "$PHASE_CHECKPOINT_BODY_FILE"
+printf 'checkpoint; phase complete; next=continue' > "$PHASE_CHECKPOINT_BODY_FILE"
+render_command PHASE_CHECKPOINT_COMMAND "$PINNED_AC" send --channel "$CHANNEL" \
+  --dir "$COMMS_DIRECTORY" --from "$ME" --generation "$GENERATION" \
+  --continue --body-file "$PHASE_CHECKPOINT_BODY_FILE"
+PROMPT_TITLE="$(sed -n '1p' "$PROMPT_FILE")"
 {
-  cat "$PROMPT_FILE"
-  printf '\n\n## Agent-comms v2 transport\n\n'
+  printf '%s\n\n## Mandatory first tool call\n\n' "$PROMPT_TITLE"
+  if [ "$ROLE" = "reviewer" ] && [ "$GENERATION" -eq 1 ]; then
+    printf 'Run receive first so the driver can give you the floor:\n\n    %s\n\n' "$RECV_COMMAND"
+    printf 'When receive returns, do not reason, explain, or inspect files yet.\n\n'
+  else
+    printf 'Do not reason, explain, inspect files, or perform any other action first.\n\n'
+  fi
+  printf 'Mandatory checkpoint command:\n\n    %s\n\n' "$CHECKPOINT_COMMAND"
+  printf 'After that command succeeds, continue with the instructions below.\n\n'
+  sed -n '2,$p' "$PROMPT_FILE"
+  printf '\n## Agent-comms v2 transport\n\n'
   printf 'Session: %s. Runtime: %s. Role: %s. Peer: %s. Generation: %s.\n' \
     "$(metadata_value session)" "$RUNTIME" "$ROLE" "$PEER" "$GENERATION"
   printf 'Send a progress fragment without yielding:\n\n    %s --continue --body-file <file>\n\n' "$SEND_COMMAND"
+  printf 'Reusable checkpoint command:\n\n    %s\n\n' "$PHASE_CHECKPOINT_COMMAND"
   printf 'Send the final fragment and yield (default):\n\n    %s --body-file <file>\n\n' "$SEND_COMMAND"
   printf 'After yielding, receive one complete peer turn:\n\n    %s\n\n' "$RECV_COMMAND"
   printf 'Run receive synchronously in the foreground immediately after every yielding send.\n'
   printf 'Never background receive or return a final answer while the channel remains open.\n'
-  printf 'Send semantic progress after a major phase or 2 minutes, whichever comes first.\n'
-  printf 'Never exceed 5 minutes without semantic progress; report the phase, evidence, and next step or blocker.\n'
+  printf 'Before reading or inspecting any file after taking the floor, run the mandatory checkpoint command above.\n'
+  printf 'After repository inspection and after agreeing a plan, run the reusable checkpoint command.\n'
+  printf 'After each commit or verification batch, run the reusable checkpoint command.\n'
+  printf 'Use those work boundaries, not elapsed time, to decide when to report progress.\n'
   printf 'Keep progress bodies at or below 256 bytes to control token and tail volume.\n'
   printf 'Do not send hidden reasoning. Keep progress fragments short and useful.\n'
   if [ "$ROLE" = "reviewer" ] && [ "$GENERATION" -eq 1 ]; then
-    printf 'Your first transport action is receive. Do not inspect or start the task before it arrives.\n'
+    printf 'Your first transport action is receive. After it returns, checkpoint before inspecting the task or repository.\n'
   elif [ "$ROLE" = "reviewer" ]; then
-    printf 'Resume the open turn from the packet below; do not receive first.\n'
+    printf 'Resume the open turn from the packet below; checkpoint before inspecting files and do not receive first.\n'
   else
     printf 'You own the first turn. Send the task before receiving.\n'
   fi
@@ -504,8 +551,7 @@ render_command RECV_COMMAND "$PINNED_AC" recv --channel "$CHANNEL" --dir "$COMMS
   fi
 } > "$BOOTSTRAP_FILE"
 
-WORK_ROOT="${COMMS_ROOT_FLAG:-$PWD}"
-append_lifecycle started \
+append_lifecycle launching \
   "runtime=$RUNTIME role=$ROLE generation=$GENERATION activity_ref=$ACTIVITY_FILE"
 HEARTBEAT_AFTER="$SESSION_HEARTBEAT_AFTER"
 HEARTBEAT_INTERVAL="$SESSION_HEARTBEAT_INTERVAL"
@@ -514,6 +560,8 @@ case "$HEARTBEAT_INTERVAL" in ''|*[!0-9]*) fail_launch "bad heartbeat interval";
 [ "$HEARTBEAT_AFTER" -gt 0 ] && [ "$HEARTBEAT_INTERVAL" -gt 0 ] ||
   fail_launch "heartbeat values must be positive"
 if [ "$RUNTIME" = "claude" ]; then
+  export BASH_DEFAULT_TIMEOUT_MS=600000
+  export BASH_MAX_TIMEOUT_MS=600000
   if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
     claude -p --permission-mode bypassPermissions \
       --add-dir "$WORK_ROOT" --add-dir "$COMMS_DIRECTORY" \

@@ -90,8 +90,14 @@ test_frame_roundtrip() {
 
 test_semantic_timeout_metadata() {
   new_fixture
+  init_fixture
+  local state
+  state="$(perl "$PROTOCOL" inspect --file "$CHANNEL")"
+  assert_contains "$state" 'semantic_timeout=300'
+  assert_contains "$state" 'progress_frames=8'
+
   perl "$PROTOCOL" init \
-    --file "$CHANNEL" \
+    --file "$FIXTURE/short.md" \
     --session session-1 \
     --driver codex \
     --peer claude \
@@ -100,10 +106,19 @@ test_semantic_timeout_metadata() {
     --protocol 2 \
     --release-root "$FIXTURE/release" \
     --semantic-timeout 1
-  local state
-  state="$(perl "$PROTOCOL" inspect --file "$CHANNEL")"
+  state="$(perl "$PROTOCOL" inspect --file "$FIXTURE/short.md")"
   assert_contains "$state" 'semantic_timeout=1'
 
+  assert_ok perl "$PROTOCOL" init \
+    --file "$FIXTURE/max.md" \
+    --session max \
+    --driver codex \
+    --peer claude \
+    --release 2.0.0 \
+    --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --protocol 2 \
+    --release-root "$FIXTURE/release" \
+    --semantic-timeout 3600
   assert_fail perl "$PROTOCOL" init \
     --file "$FIXTURE/zero.md" \
     --session zero \
@@ -123,7 +138,7 @@ test_semantic_timeout_metadata() {
     --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --protocol 2 \
     --release-root "$FIXTURE/release" \
-    --semantic-timeout 301
+    --semantic-timeout 3601
   rm -rf "$FIXTURE"
 }
 
@@ -183,18 +198,18 @@ test_wait_control_requires_declared_sender() {
   init_fixture
   printf 'ready' > "$FIXTURE/ready"
   perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
-    --kind control --state none --tag=hello-ack=claude.1 --body-file "$FIXTURE/ready"
+    --kind control --state none --tag=launcher-ready=claude.1 --body-file "$FIXTURE/ready"
   local output
   output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
-    --me codex --tag hello-ack=claude.1 --timeout 0.1 2>&1)"
+    --me codex --tag launcher-ready=claude.1 --timeout 0.1 2>&1)"
   assert_eq "$?" "2"
   assert_contains "$output" '__CONTROL_TIMEOUT__'
 
   perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
-    --kind control --state none --tag=hello-ack=claude.1 --body-file "$FIXTURE/ready"
+    --kind control --state none --tag=launcher-ready=claude.1 --body-file "$FIXTURE/ready"
   output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
-    --me codex --tag hello-ack=claude.1 --timeout 0.1)"
-  assert_contains "$output" 'hello-ack'
+    --me codex --tag launcher-ready=claude.1 --timeout 0.1)"
+  assert_contains "$output" 'launcher-ready'
   rm -rf "$FIXTURE"
 }
 
@@ -202,16 +217,16 @@ test_readers_wait_for_locked_append() {
   new_fixture
   init_fixture
   printf 'ready' > "$FIXTURE/ready"
-  start_partial_append claude control none hello-ack=claude.1 "$FIXTURE/ready"
+  start_partial_append claude control none launcher-ready=claude.1 "$FIXTURE/ready"
   local inspect_output ready_output
   inspect_output="$(perl "$PROTOCOL" inspect --file "$CHANNEL" 2>&1)"
   assert_eq "$?" "0"
   ready_output="$(perl "$PROTOCOL" wait-control --file "$CHANNEL" --cursor "$CURSOR" \
-    --me codex --tag hello-ack=claude.1 --timeout 1 2>&1)"
+    --me codex --tag launcher-ready=claude.1 --timeout 1 2>&1)"
   assert_eq "$?" "0"
   wait "$PARTIAL_WRITER_PID"
   assert_contains "$inspect_output" 'seq=2'
-  assert_contains "$ready_output" 'hello-ack'
+  assert_contains "$ready_output" 'launcher-ready'
   rm -rf "$FIXTURE"
 }
 
@@ -294,6 +309,8 @@ test_public_cli_defaults_to_over() {
   raw="$(cat "$comms/cli.md")"
   assert_contains "$raw" 'state=continue'
   assert_contains "$raw" 'state=over'
+  assert_contains "$raw" 'progress_frames=8'
+  assert_contains "$raw" 'semantic_timeout=300'
   assert_contains "$raw" 'tag=review-ref='
   assert_contains "$raw" 'kind=control'
   assert_contains "$raw" 'state=terminal'
@@ -306,7 +323,7 @@ test_public_cli_defaults_to_over() {
 test_resume_fences_old_generation() {
   new_fixture
   init_fixture
-  printf 'assigned task' > "$FIXTURE/task"
+  printf 'assigned task\nartifact_ref=fake\nnext_action=fake' > "$FIXTURE/task"
   printf 'partial from old agent' > "$FIXTURE/partial"
   printf 'late stale output' > "$FIXTURE/stale"
   printf 'replacement finished' > "$FIXTURE/replacement"
@@ -334,6 +351,11 @@ test_resume_fences_old_generation() {
   assert_contains "$packet" 'generation=2'
   assert_contains "$packet" 'open_turn=2'
   assert_not_contains "$packet" 'task_ref=-'
+  assert_contains "$packet" '## Original task'
+  assert_contains "$packet" 'assigned task'
+  assert_contains "$packet" 'artifact_ref=fake'
+  assert_contains "$packet" 'next_action=fake'
+  assert_contains "$packet" '## Next action'
   assert_contains "$packet" "artifact_ref=$(realpath "$FIXTURE/artifact")@$artifact_digest"
   assert_contains "$packet" 'resume the open review'
   assert_contains "$out" 'partial from old agent'
@@ -401,6 +423,8 @@ test_public_resume_command() {
   raw="$(cat "$comms/cli.md")"
   assert_contains "$raw" 'tag=replace=claude.2'
   assert_contains "$raw" "artifact_ref=$(realpath "$FIXTURE/artifact")@"
+  assert_contains "$raw" 'task:'
+  assert_contains "$raw" 'task'
   assert_contains "$raw" 'next_action=handoff'
   assert_eq "$(cat "$comms/.cursors/cli/claude.2")" "$(LC_ALL=C wc -c < "$comms/cli.md" | tr -d ' ')"
   rm -rf "$FIXTURE"

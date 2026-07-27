@@ -55,11 +55,13 @@ to `current`. V2 has no pruning command.
 
 ## Runtime progress supervision
 
-Each channel pins `semantic_timeout`, defaulting to and capped at 300 seconds.
-The launcher enforces it only while its runtime owns the floor. A
+Each channel pins `semantic_timeout`, defaulting to 300 seconds and capped at
+3600. The launcher enforces it only while its runtime owns the floor. A
 current-generation `continue` or `over` message resets the clock; status,
 heartbeat, raw runtime output, and activity ticks do not. Acquiring the floor
-starts a fresh clock, while yielding pauses enforcement.
+starts a fresh clock, while yielding pauses enforcement. The default progress
+budget is eight 512-byte frames; launcher instructions cap each normal
+checkpoint at 256 bytes.
 
 Expiry appends `semantic-timeout`, terminates the runtime, and makes the
 launcher exit 124 even when the child reports a different status. A replacement
@@ -67,6 +69,17 @@ control keeps the open turn number but resets both the receive deadline and the
 new launcher's semantic deadline. Protocol inspection failure is fail-closed:
 the launcher records `semantic-supervision-failed` when possible and exits
 nonzero.
+
+`launch` requires the reviewed repository as `--root` even when the channel
+uses a separate `--dir`. Claude launch rejects channels under
+`CLAUDE_CONFIG_DIR` (normally `~/.claude`) because the host protects that tree
+from Bash writes even when it is passed through `--add-dir`. Claude receives
+600-second foreground Bash defaults so the 590-second receive window cannot be
+silently backgrounded by the host. `launcher-ready` means adapter/transport
+readiness only. The model must publish its own first `continue` checkpoint
+before repository inspection by executing the exact bounded command injected
+by the launcher. The launcher also injects a reusable checkpoint command with a
+prebuilt body for later work boundaries.
 
 ## Runtime activity
 

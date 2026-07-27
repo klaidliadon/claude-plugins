@@ -12,7 +12,7 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
-  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R [--semantic-timeout 1..300]
+  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R [--semantic-timeout 1..3600]
   agent-comms send       --channel C --from F --generation N [--continue] [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or __TIMEOUT__)
@@ -37,7 +37,7 @@ EOF
 
 cmd_init() {
   local CHANNEL="" SESSION="" DRIVER="" PEER="" RELEASE="" DIGEST="" PROTOCOL="" RELEASE_ROOT=""
-  local PROGRESS_FRAMES=4 PROGRESS_BYTES=512 HEARTBEAT_AFTER=30 HEARTBEAT_INTERVAL=30
+  local PROGRESS_FRAMES=8 PROGRESS_BYTES=512 HEARTBEAT_AFTER=30 HEARTBEAT_INTERVAL=30
   local SEMANTIC_TIMEOUT=300
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -267,7 +267,7 @@ cmd_wait_ready() {
     --file "$file" \
     --cursor "$cursor" \
     --me "$ME" \
-    --tag "hello-ack=$PEER.$GENERATION" \
+    --tag "launcher-ready=$PEER.$GENERATION" \
     --timeout "$TIMEOUT"
 }
 

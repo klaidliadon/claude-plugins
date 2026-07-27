@@ -13,9 +13,13 @@ Release literal: `--client-release 2.0.0`. Never derive or change it at runtime.
 
 ## Start a review
 
-Pick one absolute `--dir` writable by both runtime sandboxes and pass it on
-every command. Prefer the project's `tmp/`; a host deny rule can still block a
-path passed through `--add-dir`.
+Pick the reviewed repository's absolute root `R` and one absolute `--dir D`
+writable by both runtime sandboxes. Pass `--dir D` on every command. Every
+`launch` also requires `--root R`; this keeps the work tree independent from
+the shared channel directory and the caller's current directory. For Claude,
+`D` must be outside `CLAUDE_CONFIG_DIR` (normally `~/.claude`); that tree is
+protected even with `--add-dir` and bypass mode, so launch rejects it before
+spending a model turn.
 
 1. Create the channel. The invoked immutable release pins its own version,
    digest, protocol, and root:
@@ -30,10 +34,11 @@ path passed through `--add-dir`.
    ```text
    agent-comms launch <claude|codex> --role reviewer --peer <me> \
      --channel C --generation 1 --prompt-file P \
-     --client-release 2.0.0 --dir D
+     --client-release 2.0.0 --root R --dir D
    ```
 
-3. Require the launcher handshake before spending a model turn:
+3. Require `launcher-ready` before spending a model turn. This proves the
+   transport and runtime adapter are ready; it is not a model-generated ACK:
 
    ```text
    agent-comms wait-ready --channel C --me <me> --peer <peer> \
@@ -56,20 +61,27 @@ agent-comms recv --channel C --me <me> --generation N --dir D
 
 `recv` returns one completed peer turn, coalescing progressive messages and
 excluding heartbeats/status. Never poll after `--continue`; keep working.
-Progress is capped at four 512-byte fragments per turn. Send useful conclusions,
+Progress is capped at eight 512-byte fragments per turn. Send useful conclusions,
 not tool logs or hidden reasoning.
 
-For multi-phase work, `--continue` is mandatory after each completed major
-phase or two minutes, whichever comes first. Never exceed five minutes without
-semantic progress: report the phase, concrete evidence, and next step or
-blocker in at most 256 bytes. Skip progress frames for short single-phase work;
-never manufacture updates just to consume the budget.
+When taking the floor, run the launcher's exact mandatory checkpoint command
+before reading files. It uses a prebuilt bounded body, so the first model tool
+call proves transport participation without spending tokens composing status.
+Run the launcher's reusable checkpoint command after repository inspection,
+after agreeing a plan, and after each commit or verification batch. Use work boundaries, not
+elapsed-time guesses. Report the phase, concrete evidence, and next step or
+blocker in at most 256 bytes. Skip inapplicable phases; never manufacture
+updates.
 
-The session pins a `semantic_timeout` of at most 300 seconds. While an agent
-holds the floor, only one of its current-generation message frames resets that
-clock; status, heartbeat, and activity ticks do not. The launcher records
-`semantic-timeout`, terminates the runtime, and exits 124 when the limit
-expires. The waiting peer may then resume it.
+The session defaults `semantic_timeout` to 300 seconds and permits at most 3600.
+While an agent holds the floor, only one of its current-generation message
+frames resets that clock; status, heartbeat, and activity ticks do not. The
+launcher records `semantic-timeout`, terminates the runtime, and exits 124 when
+the limit expires. The waiting peer may then resume it.
+
+Claude launches with foreground Bash timeouts long enough for the default
+590-second `recv`. Call `recv` synchronously again after a silence timeout;
+never leave it running in the background.
 
 Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status
 `open|resolved|contested`. Only unresolved Critical/Important findings block
@@ -77,8 +89,8 @@ approval.
 
 ## Tail activity without waking the peer
 
-`hello-ack` and `started` publish `activity_ref=<absolute path>`. Humans and
-external supervisors may tail it. `seq` advances at most once per active
+`launcher-ready` and `launching` publish `activity_ref=<absolute path>`. Humans
+and external supervisors may tail it. `seq` advances at most once per active
 30-second window and exposes no content or byte count. Activity never yields or
 wakes `recv`; never relay it to the waiting model.
 
@@ -92,12 +104,13 @@ agent-comms resume --channel C --from <driver> --generation <driver-gen> \
   --replace <peer> --body-file HANDOFF [--artifact-file ARTIFACT] --dir D
 ```
 
-Launch the peer again with its incremented generation and the same pinned
-`--client-release 2.0.0`. Pass the current artifact when one exists. The
-launcher verifies its hash and injects the checksummed resume packet; never
-replay the full transcript or fall forward to `current`. Late old-generation
-frames remain visible but are excluded from delivery. Replacement keeps the
-open turn number but starts fresh receive and semantic-progress deadlines.
+Launch the peer again with its incremented generation, `--root R`, and the same
+pinned `--client-release 2.0.0`. Pass the current artifact when one exists. The
+launcher verifies its hash and injects the original task body, task checksum,
+handoff, and artifact checksum; never replay the full transcript or fall
+forward to `current`. Late old-generation frames remain visible but are
+excluded from delivery. Replacement keeps the open turn number but starts fresh
+receive and semantic-progress deadlines.
 
 ## Finish
 
