@@ -5,7 +5,7 @@ SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 source "$HERE/lib.sh"
 
-CLIENT_RELEASE="2.0.1"
+CLIENT_RELEASE="2.0.2"
 
 fail_launch() {
   echo "agent-comms launch: $*" >&2
@@ -205,12 +205,13 @@ fail_supervision() {
 }
 
 semantic_watchdog_loop() {
-  local child_pid="$1" timeout="$2"
+  local child_pid="$1" timeout="$2" first_frame_timeout="$3"
   local current_size expected last_message_seq message_seq now observed_size
-  local owns_floor progress_since state
+  local owns_floor progress_since state deadline sent_first
   current_size="-1"
   last_message_seq=""
   owns_floor=0
+  sent_first=0
   progress_since="$(date +%s)"
   while kill -0 "$child_pid" 2>/dev/null; do
     now="$(date +%s)"
@@ -223,6 +224,7 @@ semantic_watchdog_loop() {
       fi
       expected="$(state_value "$state" expected)"
       message_seq="$(state_value "$state" "message_seq.$ME")"
+      case "$message_seq" in ''|0) ;; *) sent_first=1;; esac
       if [ "$expected" = "$ME" ]; then
         if [ "$owns_floor" -eq 0 ] || [ "$message_seq" != "$last_message_seq" ]; then
           progress_since="$now"
@@ -234,9 +236,21 @@ semantic_watchdog_loop() {
       current_size="$observed_size"
       last_message_seq="$message_seq"
     fi
-    if [ "$owns_floor" -eq 1 ] && [ $((now - progress_since)) -ge "$timeout" ]; then
-      fail_supervision "$child_pid" 124 semantic-timeout \
-        "runtime=$RUNTIME role=$ROLE generation=$GENERATION limit=${timeout}s"
+    if [ "$sent_first" -eq 1 ]; then
+      deadline="$timeout"
+    else
+      deadline="$first_frame_timeout"
+    fi
+    if [ "$owns_floor" -eq 1 ] && [ $((now - progress_since)) -ge "$deadline" ]; then
+      if [ "$sent_first" -eq 1 ]; then
+        fail_supervision "$child_pid" 124 semantic-timeout \
+          "runtime=$RUNTIME role=$ROLE generation=$GENERATION limit=${deadline}s"
+      else
+        # No frame ever landed: the runtime could not use the transport at all,
+        # which is a launch-environment fault, not a stalled review.
+        fail_supervision "$child_pid" 124 first-frame-timeout \
+          "runtime=$RUNTIME role=$ROLE generation=$GENERATION limit=${deadline}s transport=unconfirmed hint=verify sandbox excludedCommands, filesystem allowWrite for the comms dir, and that the pinned agent-comms path is executable"
+      fi
       return
     fi
     sleep 1
@@ -632,6 +646,13 @@ case "$HEARTBEAT_AFTER" in ''|*[!0-9]*) fail_launch "bad heartbeat delay";; esac
 case "$HEARTBEAT_INTERVAL" in ''|*[!0-9]*) fail_launch "bad heartbeat interval";; esac
 [ "$HEARTBEAT_AFTER" -gt 0 ] && [ "$HEARTBEAT_INTERVAL" -gt 0 ] ||
   fail_launch "heartbeat values must be positive"
+FIRST_FRAME_TIMEOUT="${AGENT_COMMS_FIRST_FRAME_TIMEOUT:-60}"
+case "$FIRST_FRAME_TIMEOUT" in ''|*[!0-9]*) fail_launch "bad first-frame timeout";; esac
+[ "$FIRST_FRAME_TIMEOUT" -gt 0 ] || fail_launch "first-frame timeout must be positive"
+# A missing first frame is diagnosed sooner than a mid-turn stall, but the
+# session-pinned semantic limit still wins when it is the tighter of the two.
+[ "$FIRST_FRAME_TIMEOUT" -le "$SESSION_SEMANTIC_TIMEOUT" ] ||
+  FIRST_FRAME_TIMEOUT="$SESSION_SEMANTIC_TIMEOUT"
 if [ "$RUNTIME" = "claude" ]; then
   export BASH_DEFAULT_TIMEOUT_MS=600000
   export BASH_MAX_TIMEOUT_MS=600000
@@ -660,7 +681,7 @@ fi
 CHILD_PID=$!
 heartbeat_loop "$CHILD_PID" "$HEARTBEAT_AFTER" "$HEARTBEAT_INTERVAL" &
 HEARTBEAT_PID=$!
-semantic_watchdog_loop "$CHILD_PID" "$SESSION_SEMANTIC_TIMEOUT" &
+semantic_watchdog_loop "$CHILD_PID" "$SESSION_SEMANTIC_TIMEOUT" "$FIRST_FRAME_TIMEOUT" &
 SUPERVISOR_PID=$!
 child_status=0
 wait "$CHILD_PID" || child_status=$?
