@@ -754,6 +754,14 @@ sub cmd_recv {
                     $_->{turn} == $session->{turn} - 1
                 } @$frames;
                 $floor_frame = $frames->[0] unless $floor_frame;
+                my $replacement_tag =
+                    "replace=$session->{expected}.$session->{generation}{$session->{expected}}";
+                my ($replacement_frame) = reverse grep {
+                    $_->{kind} eq "control" &&
+                    $_->{tag} eq $replacement_tag &&
+                    $_->{seq} > $floor_frame->{seq}
+                } @$frames;
+                $floor_frame = $replacement_frame if $replacement_frame;
                 $turn_started = timestamp_epoch($floor_frame->{ts});
             }
         }

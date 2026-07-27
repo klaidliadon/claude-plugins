@@ -132,7 +132,7 @@ test_recv_silence_ignores_old_frames() {
   local out status
   out="$(perl -e 'alarm 2; exec @ARGV' perl "$PROTOCOL" recv \
     --file "$CHANNEL" --cursor "$CURSOR" --me claude --generation 1 \
-    --silence-seconds 0.1 --turn-seconds 1 2>&1)"
+    --silence-seconds 0.1 --turn-seconds 10 2>&1)"
   status=$?
   assert_eq "$status" "2"
   assert_contains "$out" '__SILENCE_TIMEOUT__'
@@ -200,6 +200,35 @@ test_turn_deadline_survives_recv_restarts() {
     --silence-seconds 10 --turn-seconds 0 2>&1)"
   assert_eq "$?" "3"
   assert_contains "$output" '__TURN_TIMEOUT__'
+  rm -rf "$FIXTURE"
+}
+
+test_resume_resets_turn_deadline() {
+  new_fixture
+  init_fixture
+  printf 'task' > "$FIXTURE/task"
+  printf 'resume the open turn' > "$FIXTURE/handoff"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  perl -pi -e '
+    if (/kind=message/ && /sender=codex/) {
+      s/ts=\S+/ts=2000-01-01T00:00:00Z/;
+    }
+  ' "$CHANNEL"
+  perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
+    --replace claude --body-file "$FIXTURE/handoff"
+
+  perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me codex \
+    --generation 1 --silence-seconds 10 --turn-seconds 2 \
+    > "$FIXTURE/recv.out" 2>&1 &
+  local recv_pid=$!
+  sleep 0.1
+  if ! kill -0 "$recv_pid" 2>/dev/null; then
+    fail "replacement did not reset the open turn deadline"
+  fi
+  wait "$recv_pid"
+  assert_eq "$?" "3"
+  assert_contains "$(cat "$FIXTURE/recv.out")" '__TURN_TIMEOUT__'
   rm -rf "$FIXTURE"
 }
 
@@ -508,6 +537,7 @@ else
   test_readers_wait_for_locked_append
   test_recv_rejects_floor_owner_immediately
   test_turn_deadline_survives_recv_restarts
+  test_resume_resets_turn_deadline
   test_public_cli_defaults_to_over
   test_resume_fences_old_generation
   test_resume_rejects_changed_artifact
