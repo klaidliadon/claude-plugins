@@ -63,6 +63,13 @@ starts a fresh clock, while yielding pauses enforcement. The default progress
 budget is eight 512-byte frames; launcher instructions cap each normal
 checkpoint at 256 bytes.
 
+Until the runtime lands its first current-generation frame, the launcher uses a
+separate 60-second deadline, configurable through the positive integer
+`AGENT_COMMS_FIRST_FRAME_TIMEOUT` and clamped to the session semantic limit.
+Expiry appends `first-frame-timeout` with `transport=unconfirmed`, terminates
+the runtime, and exits 124. This diagnoses launch-environment transport failures
+without waiting for the mid-turn semantic deadline.
+
 The 300-second default is the maximum interval between evidence-bearing
 updates, not a total review deadline. Larger values are explicit per-session
 overrides for workloads that cannot expose a smaller meaningful boundary.
@@ -124,7 +131,9 @@ upgraded in place. Start a new v2 channel after installation.
 Every changed bundle gets a new version. Never reuse an installed version.
 
 1. Set the same version in `.claude-plugin/plugin.json`, the literal
-   `--client-release` in `SKILL.md`, and `CLIENT_RELEASE` in `bin/launch.sh`.
+   `--client-release` in `SKILL.md`, `CLIENT_RELEASE` in `bin/launch.sh`, and
+   every release-pinned test fixture. Sweep the prior version across the whole
+   plugin and require zero remaining matches.
 2. Generate and inspect the deterministic manifest:
 
    ```text
@@ -145,7 +154,7 @@ Every changed bundle gets a new version. Never reuse an installed version.
 5. On a clean branch, run `agent-comms release check`, then
    `agent-comms release publish`.
 
-For v2.0.1 the immutable tag is `agent-comms--v2.0.1`. `publish` rechecks the
+For v2.0.2 the immutable tag is `agent-comms--v2.0.2`. `publish` rechecks the
 bundle, creates and pushes that unmoving tag, refreshes the marketplace,
 performs the normal update transaction, and runs post-activation `doctor`.
 Rollback moves only `current`; a bad published tag is never moved or reused.
