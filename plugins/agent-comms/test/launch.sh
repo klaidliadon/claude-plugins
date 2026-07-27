@@ -463,20 +463,36 @@ test_semantic_inspection_failure_is_fail_closed() {
 
   FAKE_ARGS="$FIXTURE/semantic-inspection-failure.args" \
     FAKE_STDIN="$FIXTURE/semantic-inspection-failure.stdin" \
-    FAKE_SLEEP=10 PATH="$FAKEBIN:$PATH" \
+    FAKE_SLEEP=60 PATH="$FAKEBIN:$PATH" \
     bash "$AC" launch claude --role reviewer --peer codex \
     --channel semantic-inspection-failure --generation 1 \
     --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
     --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
-  local launcher_pid=$! attempts=0
+  local launcher_pid=$! launcher_status attempts=0
   while [ ! -f "$FIXTURE/semantic-inspection-failure.args" ] &&
-      [ "$attempts" -lt 100 ]; do
+      [ "$attempts" -lt 600 ]; do
     sleep 0.05
     attempts=$((attempts + 1))
   done
+  if [ ! -f "$FIXTURE/semantic-inspection-failure.args" ]; then
+    kill -TERM "$launcher_pid" 2>/dev/null || true
+    wait "$launcher_pid"
+    fail "fake runtime did not start"
+    rm -rf "$FIXTURE"
+    return
+  fi
   printf 'damaged channel tail\n' >> "$COMMS/semantic-inspection-failure.md"
+  attempts=0
+  while kill -0 "$launcher_pid" 2>/dev/null && [ "$attempts" -lt 600 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  if kill -0 "$launcher_pid" 2>/dev/null; then
+    kill -TERM "$launcher_pid"
+  fi
   wait "$launcher_pid"
-  assert_eq "$?" "70"
+  launcher_status=$?
+  assert_eq "$launcher_status" "70"
   rm -rf "$FIXTURE"
 }
 
