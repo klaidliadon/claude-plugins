@@ -530,11 +530,13 @@ test_progress_budget() {
     --progress-frames 4 --progress-bytes 512
   local remaining=4
   while [ "$remaining" -gt 0 ]; do
+    printf 'progress %s' "$remaining" > "$FIXTURE/progress"
     bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
       --continue --body-file "$FIXTURE/progress"
     remaining=$((remaining - 1))
   done
   local before output
+  printf 'progress exhausted' > "$FIXTURE/progress"
   before="$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')"
   output="$(bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
     --continue --body-file "$FIXTURE/progress" 2>&1)"
@@ -543,6 +545,28 @@ test_progress_budget() {
   assert_eq "$(LC_ALL=C wc -c < "$comms/budget.md" | tr -d ' ')" "$before"
   assert_ok bash "$PUBLIC_AC" send --channel budget --dir "$comms" --from codex --generation 1 \
     --body-file "$FIXTURE/final-large"
+  rm -rf "$FIXTURE"
+}
+
+test_duplicate_progress_is_rejected() {
+  new_fixture
+  init_fixture
+  printf 'task' > "$FIXTURE/task"
+  printf 'inspected file one; open blockers=0' > "$FIXTURE/progress"
+  printf 'inspected file two; open blockers=0' > "$FIXTURE/next-progress"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind message --state continue --tag=- --body-file "$FIXTURE/progress"
+  local before output
+  before="$(LC_ALL=C wc -c < "$CHANNEL" | tr -d ' ')"
+  output="$(perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind message --state continue --tag=- --body-file "$FIXTURE/progress" 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'duplicate progress frame'
+  assert_eq "$(LC_ALL=C wc -c < "$CHANNEL" | tr -d ' ')" "$before"
+  assert_ok perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind message --state continue --tag=- --body-file "$FIXTURE/next-progress"
   rm -rf "$FIXTURE"
 }
 
@@ -611,6 +635,7 @@ else
   test_recover_partial_body_append_only
   test_recover_partial_header_append_only
   test_progress_budget
+  test_duplicate_progress_is_rejected
   test_resume_packet_schema_is_verified
   test_terminal_control_is_delivered_once
 fi

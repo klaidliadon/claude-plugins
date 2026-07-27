@@ -90,19 +90,86 @@ prepare_activity() {
   ACTIVITY_SPOOL=""
 }
 
-activity_size() {
-  perl -e '
+activity_sample() {
+  perl -MJSON::PP -MFcntl=SEEK_CUR -e '
     open my $handle, "<&=$ARGV[0]" or exit 1;
-    my @metadata = stat($handle);
-    @metadata or exit 1;
-    print $metadata[7];
+    my $data = "";
+    while (1) {
+      my $read = sysread($handle, my $chunk, 65536);
+      defined $read or exit 1;
+      last unless $read;
+      $data .= $chunk;
+    }
+    exit 0 unless length $data;
+    my $last_newline = rindex($data, "\n");
+    if ($last_newline < 0) {
+      sysseek($handle, -length($data), SEEK_CUR) or exit 1;
+      exit 0;
+    }
+    my $trailing = length($data) - $last_newline - 1;
+    sysseek($handle, -$trailing, SEEK_CUR) or exit 1 if $trailing;
+    $data = substr($data, 0, $last_newline + 1);
+
+    my %allowed_type = map { $_ => 1 } qw(
+      system assistant user result stream_event
+      item.started item.updated item.completed
+      turn.started turn.completed thread.started error
+    );
+    my %allowed_block = map { $_ => 1 } qw(
+      text tool_use tool_result thinking reasoning
+      command_execution agent_message mcp_tool_call mcp_tool_result
+      message_start message_delta message_stop
+      content_block_start content_block_delta content_block_stop
+    );
+    my (%seen_type, %seen_block, @types, @blocks);
+    my $add = sub {
+      my ($value, $allowed, $seen, $values) = @_;
+      $value = "other" unless defined $value && !ref($value) && $allowed->{$value};
+      return if $seen->{$value}++;
+      push @$values, $value;
+    };
+    my $events = 0;
+    for my $line (split /\n/, $data) {
+      next unless length $line;
+      $events++;
+      my $object = eval { decode_json($line) };
+      if (!$object || ref($object) ne "HASH") {
+        $add->("other", \%allowed_type, \%seen_type, \@types);
+        next;
+      }
+      $add->($object->{type}, \%allowed_type, \%seen_type, \@types);
+      if (ref($object->{message}) eq "HASH" &&
+          ref($object->{message}{content}) eq "ARRAY") {
+        for my $block (@{$object->{message}{content}}) {
+          next unless ref($block) eq "HASH";
+          $add->($block->{type}, \%allowed_block, \%seen_block, \@blocks);
+        }
+      }
+      if (ref($object->{event}) eq "HASH") {
+        $add->($object->{event}{type}, \%allowed_block, \%seen_block, \@blocks);
+        if (ref($object->{event}{content_block}) eq "HASH") {
+          $add->($object->{event}{content_block}{type},
+            \%allowed_block, \%seen_block, \@blocks);
+        }
+      }
+      if (ref($object->{content_block}) eq "HASH") {
+        $add->($object->{content_block}{type}, \%allowed_block, \%seen_block, \@blocks);
+      }
+      if (ref($object->{item}) eq "HASH") {
+        $add->($object->{item}{type}, \%allowed_block, \%seen_block, \@blocks);
+      }
+    }
+    print "events=$events types=" . join(",", @types) .
+      " blocks=" . (@blocks ? join(",", @blocks) : "-");
   ' "$ACTIVITY_META_FD"
 }
 
 append_activity() {
-  local epoch="$1" sequence="$2"
+  local epoch="$1" sequence="$2" sample="$3"
   perl -MFcntl=:flock -MPOSIX=strftime -e '
-    my ($path, $epoch, $sequence) = @ARGV;
+    my ($path, $epoch, $sequence, $sample) = @ARGV;
+    $sample =~ /\Aevents=\d+ types=[A-Za-z0-9.,_-]+ blocks=[A-Za-z0-9.,_-]+\z/
+      or exit 1;
     my @path_metadata = lstat($path);
     @path_metadata or exit 1;
     -l _ and exit 1;
@@ -113,9 +180,9 @@ append_activity() {
     $path_metadata[0] == $handle_metadata[0] or exit 1;
     $path_metadata[1] == $handle_metadata[1] or exit 1;
     my $timestamp = strftime("%Y-%m-%dT%H:%M:%SZ", gmtime($epoch));
-    print {$handle} "ts=$timestamp seq=$sequence\n" or exit 1;
+    print {$handle} "ts=$timestamp seq=$sequence $sample\n" or exit 1;
     close $handle or exit 1;
-  ' "$ACTIVITY_FILE" "$epoch" "$sequence"
+  ' "$ACTIVITY_FILE" "$epoch" "$sequence" "$sample"
 }
 
 terminate_runtime() {
@@ -179,14 +246,13 @@ semantic_watchdog_loop() {
 heartbeat_loop() {
   local child_pid="$1" after="$2" interval="$3"
   local last_size quiet_since last_heartbeat current_size now elapsed state
-  local activity_enabled activity_seq activity_last_size activity_current_size
+  local activity_enabled activity_seq activity_current_sample
   local activity_last_at activity_last_sample activity_next_sequence
   last_size="$(LC_ALL=C wc -c < "$CHANNEL_FILE" | tr -d ' ')"
   quiet_since="$(date +%s)"
   last_heartbeat="$quiet_since"
   activity_enabled=1
   activity_seq=0
-  activity_last_size=0
   activity_last_at="$quiet_since"
   activity_last_sample="$quiet_since"
   while kill -0 "$child_pid" 2>/dev/null; do
@@ -195,11 +261,10 @@ heartbeat_loop() {
     now="$(date +%s)"
     if [ "$activity_enabled" -eq 1 ] &&
         [ $((now - activity_last_sample)) -ge "$ACTIVITY_SAMPLE_INTERVAL" ]; then
-      if activity_current_size="$(activity_size)" &&
-          case "$activity_current_size" in ''|*[!0-9]*) false;; *) true;; esac; then
-        if [ "$activity_current_size" -gt "$activity_last_size" ]; then
+      if activity_current_sample="$(activity_sample)"; then
+        if [ -n "$activity_current_sample" ]; then
           activity_next_sequence=$((activity_seq + 1))
-          if append_activity "$now" "$activity_next_sequence"; then
+          if append_activity "$now" "$activity_next_sequence" "$activity_current_sample"; then
             activity_seq="$activity_next_sequence"
             activity_last_at="$now"
           else
@@ -208,7 +273,6 @@ heartbeat_loop() {
             activity_enabled=0
           fi
         fi
-        activity_last_size="$activity_current_size"
       else
         append_lifecycle "activity-disabled=sample" \
           "runtime=$RUNTIME role=$ROLE generation=$GENERATION" || true
@@ -229,7 +293,11 @@ heartbeat_loop() {
     if [ $((now - last_heartbeat)) -lt "$interval" ]; then
       continue
     fi
-    state="$(perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE")" || break
+    if ! state="$(perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE")"; then
+      fail_supervision "$child_pid" 70 heartbeat-supervision-failed \
+        "runtime=$RUNTIME role=$ROLE generation=$GENERATION"
+      return
+    fi
     [ "$(state_value "$state" terminal)" = "0" ] || continue
     [ "$(state_value "$state" expected)" = "$ME" ] || continue
     append_lifecycle alive \
@@ -274,6 +342,9 @@ case "$GENERATION" in ''|*[!0-9]*) fail_launch "bad --generation";; esac
 WORK_ROOT="$(realpath "$COMMS_ROOT_FLAG")"
 [ "$DECLARED_RELEASE" = "$CLIENT_RELEASE" ] ||
   fail_launch "client release mismatch: launcher=$CLIENT_RELEASE caller=${DECLARED_RELEASE:-missing}"
+if [ "$RUNTIME" = "claude" ] && [ "${CLAUDE_CODE_SAFE_MODE:-}" = "1" ]; then
+  fail_launch "CLAUDE_CODE_SAFE_MODE disables the agent-comms protocol"
+fi
 if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
   for argument in "${RUNTIME_ARGS[@]}"; do
     case "$argument" in
@@ -281,12 +352,18 @@ if [ "${#RUNTIME_ARGS[@]}" -gt 0 ]; then
       --include-partial-messages|--include-partial-messages=*|--json)
         fail_launch "runtime output flag is owned by agent-comms: $argument"
         ;;
+      --safe-mode|--safe-mode=*|--bare|--bare=*)
+        [ "$RUNTIME" != "claude" ] ||
+          fail_launch "$argument disables the agent-comms protocol"
+        ;;
     esac
   done
 fi
 
 ME="$RUNTIME"
 COMMS_DIRECTORY="$(comms_dir)"
+[ -d "$COMMS_DIRECTORY" ] ||
+  fail_launch "comms directory not found; initialize the channel first: $COMMS_DIRECTORY"
 if [ "$RUNTIME" = "claude" ]; then
   CLAUDE_CONFIG_ROOT="$(realpath "${CLAUDE_CONFIG_DIR:-$HOME/.claude}")"
   COMMS_PHYSICAL="$(realpath "$COMMS_DIRECTORY")"
@@ -307,7 +384,6 @@ CONTROL_CURSOR="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-control.XXXXXX")"
 SUPERVISOR_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/agent-comms-launch-supervisor.XXXXXX")"
 RESUME_PACKET_FILE=""
 CHECKPOINT_BODY_FILE=""
-PHASE_CHECKPOINT_BODY_FILE=""
 CHILD_PID=""
 HEARTBEAT_PID=""
 SUPERVISOR_PID=""
@@ -325,9 +401,6 @@ cleanup_launch() {
   fi
   if [ -n "$CHECKPOINT_BODY_FILE" ]; then
     rm -f "$CHECKPOINT_BODY_FILE"
-  fi
-  if [ -n "$PHASE_CHECKPOINT_BODY_FILE" ]; then
-    rm -f "$PHASE_CHECKPOINT_BODY_FILE"
   fi
   if [ -n "$ACTIVITY_SPOOL" ]; then
     rm -f "$ACTIVITY_SPOOL"
@@ -420,10 +493,8 @@ ACTUAL_DIGEST="$(file_sha256 "$RELEASE_ROOT/manifest.lock")"
   fail_launch "session digest mismatch: $SESSION_DIGEST != $ACTUAL_DIGEST"
 [ "$(plugin_version "$RELEASE_ROOT")" = "$SESSION_RELEASE" ] ||
   fail_launch "session version does not match pinned release"
-if [ "$GENERATION" -eq 1 ]; then
-  bash "$RELEASE_ROOT/bin/release.sh" doctor-locked --quiet ||
-    fail_launch "global installation drift detected"
-fi
+bash "$RELEASE_ROOT/bin/release.sh" doctor-locked --quiet ||
+  fail_launch "global installation drift detected"
 
 if [ "$RUNTIME" = "claude" ]; then
   ADAPTER_HELP="$(claude --help 2>&1)" || fail_launch "claude --help failed"
@@ -505,36 +576,38 @@ fi
 render_command CHECKPOINT_COMMAND "$PINNED_AC" send --channel "$CHANNEL" \
   --dir "$COMMS_DIRECTORY" --from "$ME" --generation "$GENERATION" \
   --continue --body-file "$CHECKPOINT_BODY_FILE"
-PHASE_CHECKPOINT_BODY_FILE="$(mktemp "$COMMS_DIRECTORY/.phase-checkpoint.$ME.$GENERATION.XXXXXX")"
-chmod 600 "$PHASE_CHECKPOINT_BODY_FILE"
-printf 'checkpoint; phase complete; next=continue' > "$PHASE_CHECKPOINT_BODY_FILE"
-render_command PHASE_CHECKPOINT_COMMAND "$PINNED_AC" send --channel "$CHANNEL" \
-  --dir "$COMMS_DIRECTORY" --from "$ME" --generation "$GENERATION" \
-  --continue --body-file "$PHASE_CHECKPOINT_BODY_FILE"
 PROMPT_TITLE="$(sed -n '1p' "$PROMPT_FILE")"
 {
-  printf '%s\n\n## Mandatory first tool call\n\n' "$PROMPT_TITLE"
+  printf '%s\n\n## Transport handshake\n\n' "$PROMPT_TITLE"
   if [ "$ROLE" = "reviewer" ] && [ "$GENERATION" -eq 1 ]; then
     printf 'Run receive first so the driver can give you the floor:\n\n    %s\n\n' "$RECV_COMMAND"
-    printf 'When receive returns, do not reason, explain, or inspect files yet.\n\n'
+    printf 'When receive returns, verify the local checkpoint below before repository inspection.\n\n'
   else
-    printf 'Do not reason, explain, inspect files, or perform any other action first.\n\n'
+    printf 'Verify the local checkpoint below before repository inspection.\n\n'
   fi
-  printf 'Mandatory checkpoint command:\n\n    %s\n\n' "$CHECKPOINT_COMMAND"
+  printf 'Checkpoint body (verbatim):\n\n    '
+  cat "$CHECKPOINT_BODY_FILE"
+  printf '\n\nCheckpoint command:\n\n    %s\n\n' "$CHECKPOINT_COMMAND"
+  printf 'This appends only the disclosed body to this session'\''s local channel.\n'
+  printf 'Before repository inspection, verify the command path, channel, sender, generation, and body; then run it.\n\n'
   printf 'After that command succeeds, continue with the instructions below.\n\n'
   sed -n '2,$p' "$PROMPT_FILE"
   printf '\n## Agent-comms v2 transport\n\n'
   printf 'Session: %s. Runtime: %s. Role: %s. Peer: %s. Generation: %s.\n' \
     "$(metadata_value session)" "$RUNTIME" "$ROLE" "$PEER" "$GENERATION"
   printf 'Send a progress fragment without yielding:\n\n    %s --continue --body-file <file>\n\n' "$SEND_COMMAND"
-  printf 'Reusable checkpoint command:\n\n    %s\n\n' "$PHASE_CHECKPOINT_COMMAND"
   printf 'Send the final fragment and yield (default):\n\n    %s --body-file <file>\n\n' "$SEND_COMMAND"
   printf 'After yielding, receive one complete peer turn:\n\n    %s\n\n' "$RECV_COMMAND"
   printf 'Run receive synchronously in the foreground immediately after every yielding send.\n'
   printf 'Never background receive or return a final answer while the channel remains open.\n'
-  printf 'Before reading or inspecting any file after taking the floor, run the mandatory checkpoint command above.\n'
-  printf 'After repository inspection and after agreeing a plan, run the reusable checkpoint command.\n'
-  printf 'After each commit or verification batch, run the reusable checkpoint command.\n'
+  printf 'Complete the verified transport handshake above before repository inspection.\n'
+  if [ "$ROLE" = "reviewer" ]; then
+    printf 'After every 3 files inspected, send progress naming the last file and current blocking-finding count.\n'
+    printf 'After every 3 candidate findings evaluated, send progress naming the last finding and current blocking-finding count.\n'
+  else
+    printf 'After agreeing a plan, send progress naming the phase, evidence, and next step.\n'
+  fi
+  printf 'After each commit or verification batch, send progress naming the concrete result and next step.\n'
   printf 'Use those work boundaries, not elapsed time, to decide when to report progress.\n'
   printf 'Keep progress bodies at or below 256 bytes to control token and tail volume.\n'
   printf 'Do not send hidden reasoning. Keep progress fragments short and useful.\n'

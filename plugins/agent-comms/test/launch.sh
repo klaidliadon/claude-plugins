@@ -55,7 +55,7 @@ if [ -n "${FAKE_ENV_FILE:-}" ]; then
 fi
 if [ -n "${FAKE_RUN_CHECKPOINT:-}" ]; then
   checkpoint="$(awk '
-    /^Mandatory checkpoint command:/ {
+    /^Checkpoint command:/ {
       getline
       getline
       sub(/^    /, "")
@@ -172,16 +172,22 @@ test_launch_adapters() {
   assert_contains "$claude_input" 'review the current branch'
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms send --channel claude-launch"
   assert_contains "$claude_input" "$RELEASE_ROOT/bin/agent-comms recv --channel claude-launch"
-  assert_contains "$claude_input" 'Mandatory checkpoint command'
-  assert_contains "$claude_input" 'Reusable checkpoint command'
-  assert_contains "$claude_input" '.phase-checkpoint.claude.1.'
+  assert_contains "$claude_input" 'Checkpoint command'
+  assert_not_contains "$claude_input" 'Mandatory checkpoint'
+  assert_contains "$claude_input" 'Checkpoint body (verbatim)'
+  assert_contains "$claude_input" 'started; task accepted; next=inspect'
+  assert_not_contains "$claude_input" 'Reusable checkpoint command'
+  assert_not_contains "$claude_input" '.phase-checkpoint.claude.1.'
   assert_not_contains "$claude_input" 'checkpoint; phase complete; next=continue'
-  assert_eq "$third_line" '## Mandatory first tool call'
+  assert_eq "$third_line" '## Transport handshake'
   assert_contains "$claude_input" 'Your first transport action is receive'
-  assert_contains "$claude_input" 'Before reading or inspecting any file'
+  assert_contains "$claude_input" 'Before repository inspection, verify'
+  assert_not_contains "$claude_input" 'do not reason'
+  assert_not_contains "$claude_input" 'without reasoning'
   assert_contains "$claude_input" 'Run receive synchronously in the foreground'
   assert_contains "$claude_input" 'Never background receive or return a final answer'
-  assert_contains "$claude_input" 'After repository inspection'
+  assert_contains "$claude_input" 'After every 3 files inspected'
+  assert_contains "$claude_input" 'last file and current blocking-finding count'
   assert_contains "$claude_input" 'After each commit'
   assert_not_contains "$claude_input" '2 minutes'
   assert_contains "$claude_input" 'Keep progress bodies at or below 256 bytes'
@@ -231,6 +237,51 @@ test_claude_rejects_channel_under_config_root() {
   assert_eq "$?" "64"
   assert_contains "$output" 'choose --dir outside it'
   assert_fail test -e "$FIXTURE/protected.args"
+  rm -rf "$FIXTURE"
+}
+
+test_launch_rejects_missing_comms_directory() {
+  new_launch_fixture
+  local missing="$FIXTURE/missing-comms" output
+  output="$(FAKE_ARGS="$FIXTURE/missing-comms.args" \
+    FAKE_STDIN="$FIXTURE/missing-comms.stdin" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel missing-comms --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --root "$WORK_ROOT" --dir "$missing" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'initialize the channel first'
+  assert_fail test -e "$FIXTURE/missing-comms.args"
+  rm -rf "$FIXTURE"
+}
+
+test_claude_rejects_protocol_disabling_modes() {
+  new_launch_fixture
+  local mode output
+  for mode in --safe-mode --bare; do
+    init_launch_channel "disabled-${mode#--}"
+    output="$(FAKE_ARGS="$FIXTURE/${mode#--}.args" \
+      FAKE_STDIN="$FIXTURE/${mode#--}.stdin" PATH="$FAKEBIN:$PATH" \
+      bash "$AC" launch claude --role reviewer --peer codex \
+      --channel "disabled-${mode#--}" --generation 1 \
+      --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+      --root "$WORK_ROOT" --dir "$COMMS" -- "$mode" 2>&1)"
+    assert_eq "$?" "64"
+    assert_contains "$output" 'disables the agent-comms protocol'
+    assert_fail test -e "$FIXTURE/${mode#--}.args"
+  done
+
+  init_launch_channel disabled-env
+  output="$(FAKE_ARGS="$FIXTURE/safe-env.args" \
+    FAKE_STDIN="$FIXTURE/safe-env.stdin" PATH="$FAKEBIN:$PATH" \
+    CLAUDE_CODE_SAFE_MODE=1 \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel disabled-env --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'CLAUDE_CODE_SAFE_MODE disables the agent-comms protocol'
+  assert_fail test -e "$FIXTURE/safe-env.args"
   rm -rf "$FIXTURE"
 }
 
@@ -429,13 +480,42 @@ test_semantic_inspection_failure_is_fail_closed() {
   rm -rf "$FIXTURE"
 }
 
+test_heartbeat_inspection_failure_is_fail_closed() {
+  new_launch_fixture
+  init_launch_channel heartbeat-inspection-failure \
+    --heartbeat-after 3 --heartbeat-interval 1
+  FAKE_ARGS="$FIXTURE/heartbeat-inspection-failure.args" \
+    FAKE_STDIN="$FIXTURE/heartbeat-inspection-failure.stdin" \
+    FAKE_SLEEP=6 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel heartbeat-inspection-failure --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1 &
+  local launcher_pid=$! attempts=0
+  while [ ! -f "$FIXTURE/heartbeat-inspection-failure.args" ] &&
+      [ "$attempts" -lt 100 ]; do
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  sleep 1.5
+  perl -pi -e 'if ($. == 1) { substr($_, 0, 1) = "X" }' \
+    "$COMMS/heartbeat-inspection-failure.md"
+  wait "$launcher_pid"
+  assert_eq "$?" "70"
+  rm -rf "$FIXTURE"
+}
+
 test_sanitized_activity_sampling() {
   new_launch_fixture
   init_launch_channel activity --heartbeat-after 1 --heartbeat-interval 1
   printf 'review activity' > "$FIXTURE/task"
-  printf '%s\n%s\n' \
-    '{"type":"tool","secret":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
-    '{"type":"assistant","text":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"ACTIVITY_SECRET_DO_NOT_COPY"},{"type":"tool_use","name":"Read","input":{"path":"ACTIVITY_SECRET_DO_NOT_COPY"}}]}}' \
+    '{"type":"user","message":{"content":[{"type":"tool_result","content":"ACTIVITY_SECRET_DO_NOT_COPY"}]}}' \
+    '{"type":"item.completed","item":{"type":"command_execution","output":"ACTIVITY_SECRET_DO_NOT_COPY"}}' \
+    '{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"thinking","thinking":"ACTIVITY_SECRET_DO_NOT_COPY"}}}' \
+    '{"type":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
+    'ACTIVITY_SECRET_DO_NOT_COPY' \
     > "$FIXTURE/first.jsonl"
   printf '%s\n' '{"type":"result","secret":"ACTIVITY_SECRET_DO_NOT_COPY"}' \
     > "$FIXTURE/second.jsonl"
@@ -459,6 +539,10 @@ test_sanitized_activity_sampling() {
   assert_eq "$tick_count" "2"
   assert_contains "$feed" 'seq=1'
   assert_contains "$feed" 'seq=2'
+  assert_contains "$feed" 'events=6'
+  assert_contains "$feed" 'types=assistant,user,item.completed,stream_event,other'
+  assert_contains "$feed" 'blocks=text,tool_use,tool_result,command_execution,content_block_start,thinking'
+  assert_contains "$feed" 'events=1 types=result blocks=-'
   assert_not_contains "$feed" 'seq=3'
   assert_not_contains "$feed" 'bytes='
   assert_not_contains "$feed" 'ACTIVITY_SECRET_DO_NOT_COPY'
@@ -466,6 +550,59 @@ test_sanitized_activity_sampling() {
   assert_contains "$raw" 'activity_seq=2'
   assert_contains "$raw" 'activity_idle='
   assert_eq "$spool_count" "0"
+  rm -rf "$FIXTURE"
+}
+
+test_activity_preserves_partial_stream_record() {
+  new_launch_fixture
+  init_launch_channel activity-partial --heartbeat-after 1 --heartbeat-interval 1
+  printf 'review activity' > "$FIXTURE/task"
+  printf '%s' '{"type":"assistant","message":{"content":[{"type":"text","text":"' \
+    > "$FIXTURE/first.jsonl"
+  printf '%s\n' 'ACTIVITY_SECRET_DO_NOT_COPY"}]}}' > "$FIXTURE/second.jsonl"
+  bash "$AC" send --channel activity-partial --root "$WORK_ROOT" --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+  FAKE_ARGS="$FIXTURE/activity-partial.args" \
+    FAKE_STDIN="$FIXTURE/activity-partial.stdin" \
+    FAKE_STDOUT_FILE="$FIXTURE/first.jsonl" \
+    FAKE_STDOUT_SECOND_FILE="$FIXTURE/second.jsonl" FAKE_STDOUT_GAP=1.5 \
+    FAKE_SLEEP=2 FAKE_DATE_COUNTER="$FIXTURE/date.counter" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel activity-partial --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --root "$WORK_ROOT" --dir "$COMMS"
+
+  local activity feed
+  activity="$(cd "$COMMS" && pwd -P)/.activity/activity-partial/claude.1.log"
+  feed="$(cat "$activity")"
+  assert_contains "$feed" 'seq=1 events=1 types=assistant blocks=text'
+  assert_not_contains "$feed" 'seq=2'
+  assert_not_contains "$feed" 'ACTIVITY_SECRET_DO_NOT_COPY'
+  rm -rf "$FIXTURE"
+}
+
+test_resumed_launch_rechecks_global_drift() {
+  new_launch_fixture
+  init_launch_channel resumed-drift
+  printf 'review task' > "$FIXTURE/task"
+  printf 'resume review' > "$FIXTURE/handoff"
+  bash "$AC" send --channel resumed-drift --root "$WORK_ROOT" --dir "$COMMS" \
+    --from codex --generation 1 --body-file "$FIXTURE/task"
+  bash "$AC" resume --channel resumed-drift --root "$WORK_ROOT" --dir "$COMMS" \
+    --from codex --generation 1 --replace claude --body-file "$FIXTURE/handoff"
+  rm "$PUBLIC_BIN/agent-comms"
+
+  local output
+  output="$(FAKE_ARGS="$FIXTURE/resumed-drift.args" \
+    FAKE_STDIN="$FIXTURE/resumed-drift.stdin" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel resumed-drift --generation 2 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.0 \
+    --root "$WORK_ROOT" --dir "$COMMS" 2>&1)"
+  assert_eq "$?" "64"
+  assert_contains "$output" 'global installation drift detected'
+  assert_fail test -e "$FIXTURE/resumed-drift.args"
+  assert_not_contains "$(cat "$COMMS/resumed-drift.md")" 'tag=launcher-ready=claude.2'
   rm -rf "$FIXTURE"
 }
 
@@ -738,14 +875,19 @@ else
   test_launch_adapters
   test_launch_requires_work_root
   test_claude_rejects_channel_under_config_root
+  test_launch_rejects_missing_comms_directory
+  test_claude_rejects_protocol_disabling_modes
   test_activity_setup_and_flag_validation
   test_heartbeat_and_lifecycle
   test_semantic_progress_timeout_is_enforced
   test_semantic_progress_resets_timeout
   test_semantic_timeout_pauses_without_floor
   test_semantic_inspection_failure_is_fail_closed
+  test_heartbeat_inspection_failure_is_fail_closed
   test_sanitized_activity_sampling
+  test_activity_preserves_partial_stream_record
   test_activity_generation_fencing
+  test_resumed_launch_rechecks_global_drift
   test_activity_write_failure_is_fail_open
   test_activity_sampler_death_is_fail_open
   test_activity_shutdown_is_bounded

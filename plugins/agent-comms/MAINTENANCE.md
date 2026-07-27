@@ -63,6 +63,12 @@ starts a fresh clock, while yielding pauses enforcement. The default progress
 budget is eight 512-byte frames; launcher instructions cap each normal
 checkpoint at 256 bytes.
 
+The 300-second default is the maximum interval between evidence-bearing
+updates, not a total review deadline. Larger values are explicit per-session
+overrides for workloads that cannot expose a smaller meaningful boundary.
+Consecutive byte-identical progress bodies are rejected so a canned liveness
+signal cannot extend semantic supervision.
+
 Expiry appends `semantic-timeout`, terminates the runtime, and makes the
 launcher exit 124 even when the child reports a different status. A replacement
 control keeps the open turn number but resets both the receive deadline and the
@@ -74,12 +80,16 @@ nonzero.
 uses a separate `--dir`. Claude launch rejects channels under
 `CLAUDE_CONFIG_DIR` (normally `~/.claude`) because the host protects that tree
 from Bash writes even when it is passed through `--add-dir`. Claude receives
-600-second foreground Bash defaults so the 590-second receive window cannot be
+600-second foreground Bash defaults so the 540-second receive window cannot be
 silently backgrounded by the host. `launcher-ready` means adapter/transport
 readiness only. The model must publish its own first `continue` checkpoint
-before repository inspection by executing the exact bounded command injected
-by the launcher. The launcher also injects a reusable checkpoint command with a
-prebuilt body for later work boundaries.
+before repository inspection. The bootstrap discloses the exact body and
+command and tells the model to verify the pinned path and session arguments
+before execution; it never requests a blind send. Later progress bodies are
+agent-written and must carry new evidence. Claude `--safe-mode`, `--bare`, and
+`CLAUDE_CODE_SAFE_MODE=1` are
+rejected because they remove the protocol instruction substrate. Every
+generation reruns global installation drift verification before model work.
 
 ## Runtime activity
 
@@ -91,9 +101,11 @@ generation-scoped feed at:
 D/.activity/C/<agent>.<generation>.log
 ```
 
-The feed records at most one `ts=… seq=N` tick per active 30-second window:
-120 lines per active hour and zero peer-model turns. Files share the comms
-directory's retention lifecycle.
+The feed records at most one sanitized sample per active 30-second window:
+`ts`, `seq`, event count, structural event types, and structural content-block
+types. It records no message text, reasoning, tool input/output, or byte count:
+at most 120 lines per active hour and zero peer-model turns. Files share the
+comms directory's retention lifecycle.
 
 Raw structured output exists only in a mode-`0600` spool unlinked before the
 runtime starts. It has no pathname while populated but can reach page cache or

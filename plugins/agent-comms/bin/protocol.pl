@@ -414,6 +414,26 @@ sub cmd_append {
     if ($kind eq "message" && $state eq "continue") {
         fail("progress frame exceeds $session->{progress_bytes} bytes; coalesce progress into the final yielding frame")
             if length($body) > $session->{progress_bytes};
+        my ($previous_progress) = reverse grep {
+            !$_->{stale} &&
+            $_->{kind} eq "message" &&
+            $_->{sender} eq $sender &&
+            $_->{generation} == $generation &&
+            $_->{turn} == $session->{turn} &&
+            $_->{state} eq "continue"
+        } @$frames;
+        if ($previous_progress) {
+            my $candidate_block = frame_block(
+                ts => $previous_progress->{ts},
+                sender => $previous_progress->{sender},
+                kind => "message",
+                state => "continue",
+                tag => $previous_progress->{tag},
+                body => $body,
+            );
+            fail("duplicate progress frame; report new evidence or yield")
+                if $candidate_block eq $previous_progress->{block};
+        }
         my $progress_count = grep {
             !$_->{stale} &&
             $_->{kind} eq "message" &&
@@ -773,7 +793,7 @@ sub write_cursor {
 sub cmd_recv {
     my (@argv) = @_;
     my ($file, $cursor, $me, $generation, $silence_seconds, $turn_seconds);
-    $silence_seconds = 590;
+    $silence_seconds = 540;
     $turn_seconds = 1800;
     GetOptionsFromArray(
         \@argv,
