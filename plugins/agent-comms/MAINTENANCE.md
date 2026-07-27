@@ -69,6 +69,9 @@ separate 60-second deadline, configurable through the positive integer
 Expiry appends `first-frame-timeout` with `transport=unconfirmed`, terminates
 the runtime, and exits 124. This diagnoses launch-environment transport failures
 without waiting for the mid-turn semantic deadline.
+If a runtime exits while it owns the floor without landing that first frame,
+the launcher instead appends `first-frame-exit`; a reported child status of zero
+is converted to exit 70 so missing transport participation cannot pass.
 
 The 300-second default is the maximum interval between evidence-bearing
 updates, not a total review deadline. Larger values are explicit per-session
@@ -82,6 +85,8 @@ control keeps the open turn number but resets both the receive deadline and the
 new launcher's semantic deadline. Protocol inspection failure is fail-closed:
 the launcher records `semantic-supervision-failed` when possible and exits
 nonzero.
+Terminal peer control terminates the runtime immediately; it does not leave a
+reviewer running after the channel is closed.
 
 `launch` requires the reviewed repository as `--root` even when the channel
 uses a separate `--dir`. Claude launch rejects channels under
@@ -92,8 +97,9 @@ silently backgrounded by the host. `launcher-ready` means adapter/transport
 readiness only. The model must publish its own first `continue` checkpoint
 before repository inspection. The bootstrap discloses the exact body and
 command and tells the model to verify the pinned path and session arguments
-before execution; it never requests a blind send. Later progress bodies are
-agent-written and must carry new evidence. Claude `--safe-mode`, `--bare`, and
+from the prompt itself, without a filesystem probe before the checkpoint.
+Later progress bodies are agent-written and must carry new evidence. Claude
+`--safe-mode`, `--bare`, and
 `CLAUDE_CODE_SAFE_MODE=1` are
 rejected because they remove the protocol instruction substrate. Every
 generation reruns global installation drift verification before model work.
@@ -154,7 +160,7 @@ Every changed bundle gets a new version. Never reuse an installed version.
 5. On a clean branch, run `agent-comms release check`, then
    `agent-comms release publish`.
 
-For v2.0.2 the immutable tag is `agent-comms--v2.0.2`. `publish` rechecks the
+For v2.0.3 the immutable tag is `agent-comms--v2.0.3`. `publish` rechecks the
 bundle, creates and pushes that unmoving tag, refreshes the marketplace,
 performs the normal update transaction, and runs post-activation `doctor`.
 Rollback moves only `current`; a bad published tag is never moved or reused.
