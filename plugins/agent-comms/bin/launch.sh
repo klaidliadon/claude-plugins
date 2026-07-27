@@ -5,7 +5,7 @@ SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 source "$HERE/lib.sh"
 
-CLIENT_RELEASE="2.0.0"
+CLIENT_RELEASE="2.0.1"
 
 fail_launch() {
   echo "agent-comms launch: $*" >&2

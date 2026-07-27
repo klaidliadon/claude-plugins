@@ -9,7 +9,7 @@ Use one append-only, human-readable channel. `tail -f "$(agent-comms path …)"`
 shows the whole exchange; hidden v2 headers, not visible separators or the word
 `over`, are authoritative.
 
-Release literal: `--client-release 2.0.0`. Never derive or change it at runtime.
+Release literal: `--client-release 2.0.1`. Never derive or change it at runtime.
 
 ## Start a review
 
@@ -34,7 +34,7 @@ spending a model turn.
    ```text
    agent-comms launch <claude|codex> --role reviewer --peer <me> \
      --channel C --generation 1 --prompt-file P \
-     --client-release 2.0.0 --root R --dir D
+     --client-release 2.0.1 --root R --dir D
    ```
 
 3. Require `launcher-ready` before spending a model turn. This proves the
@@ -118,7 +118,7 @@ agent-comms resume --channel C --from <driver> --generation <driver-gen> \
 ```
 
 Launch the peer again with its incremented generation, `--root R`, and the same
-pinned `--client-release 2.0.0`. Pass the current artifact when one exists. The
+pinned `--client-release 2.0.1`. Pass the current artifact when one exists. The
 launcher verifies its hash and injects the original task body, task checksum,
 handoff, and artifact checksum; never replay the full transcript or fall
 forward to `current`. Late old-generation frames remain visible but are

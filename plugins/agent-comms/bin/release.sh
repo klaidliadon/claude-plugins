@@ -20,8 +20,12 @@ manifest_to() {
   version="$(plugin_version "$root")"
   paths="$(mktemp "${TMPDIR:-/tmp}/agent-comms-manifest-paths.XXXXXX")"
   find "$root" -type f -print |
-    perl -MFile::Spec -pe \
-      'BEGIN { $root = shift @ARGV } chomp; $_ = File::Spec->abs2rel($_, $root) . "\n"' \
+    perl -MFile::Spec -ne \
+      'BEGIN { $root = shift @ARGV }
+       chomp;
+       $rel = File::Spec->abs2rel($_, $root);
+       next if index($rel, ".in_use/") == 0;
+       print "$rel\n"' \
       "$root" |
     LC_ALL=C sort > "$paths"
   {
