@@ -5,7 +5,7 @@ SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 source "$HERE/lib.sh"
 
-CLIENT_RELEASE="2.0.2"
+CLIENT_RELEASE="2.0.3"
 
 fail_launch() {
   echo "agent-comms launch: $*" >&2
@@ -207,7 +207,7 @@ fail_supervision() {
 semantic_watchdog_loop() {
   local child_pid="$1" timeout="$2" first_frame_timeout="$3"
   local current_size expected last_message_seq message_seq now observed_size
-  local owns_floor progress_since state deadline sent_first
+  local owns_floor progress_since state deadline sent_first terminal
   current_size="-1"
   last_message_seq=""
   owns_floor=0
@@ -224,6 +224,12 @@ semantic_watchdog_loop() {
       fi
       expected="$(state_value "$state" expected)"
       message_seq="$(state_value "$state" "message_seq.$ME")"
+      terminal="$(state_value "$state" terminal)"
+      if [ "$terminal" = "1" ]; then
+        printf '0\n' > "$SUPERVISOR_STATE_FILE" || true
+        terminate_runtime "$child_pid"
+        return
+      fi
       case "$message_seq" in ''|0) ;; *) sent_first=1;; esac
       if [ "$expected" = "$ME" ]; then
         if [ "$owns_floor" -eq 0 ] || [ "$message_seq" != "$last_message_seq" ]; then
@@ -603,7 +609,8 @@ PROMPT_TITLE="$(sed -n '1p' "$PROMPT_FILE")"
   cat "$CHECKPOINT_BODY_FILE"
   printf '\n\nCheckpoint command:\n\n    %s\n\n' "$CHECKPOINT_COMMAND"
   printf 'This appends only the disclosed body to this session'\''s local channel.\n'
-  printf 'Before repository inspection, verify the command path, channel, sender, generation, and body; then run it.\n\n'
+  printf 'Verify those disclosed values from this prompt only; do not inspect the filesystem or run a verification tool.\n'
+  printf 'Apart from the required receive above when present, run no other tool before this command; execute it as your next transport action.\n\n'
   printf 'After that command succeeds, continue with the instructions below.\n\n'
   sed -n '2,$p' "$PROMPT_FILE"
   printf '\n## Agent-comms v2 transport\n\n'
@@ -689,6 +696,21 @@ stop_supervisor
 stop_heartbeat
 if [ -s "$SUPERVISOR_STATE_FILE" ]; then
   read -r child_status < "$SUPERVISOR_STATE_FILE"
+else
+  state="$(perl "$HERE/protocol.pl" inspect --file "$CHANNEL_FILE")" ||
+    fail_launch "cannot inspect channel after runtime exit"
+  if [ "$(state_value "$state" terminal)" = "0" ] &&
+      [ "$(state_value "$state" expected)" = "$ME" ]; then
+    message_seq="$(state_value "$state" "message_seq.$ME")"
+    case "$message_seq" in
+      ''|0)
+        runtime_status="$child_status"
+        [ "$child_status" -ne 0 ] || child_status=70
+        append_lifecycle first-frame-exit \
+          "runtime=$RUNTIME role=$ROLE generation=$GENERATION child_status=$runtime_status transport=unconfirmed"
+        ;;
+    esac
+  fi
 fi
 if ! append_lifecycle "exit=$child_status" \
     "runtime=$RUNTIME role=$ROLE generation=$GENERATION"; then

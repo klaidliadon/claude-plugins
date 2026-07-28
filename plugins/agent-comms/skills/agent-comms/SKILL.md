@@ -9,7 +9,7 @@ Use one append-only, human-readable channel. `tail -f "$(agent-comms path …)"`
 shows the whole exchange; hidden v2 headers, not visible separators or the word
 `over`, are authoritative.
 
-Release literal: `--client-release 2.0.2`. Never derive or change it at runtime.
+Release literal: `--client-release 2.0.3`. Never derive or change it at runtime.
 
 ## Start a review
 
@@ -34,7 +34,7 @@ spending a model turn.
    ```text
    agent-comms launch <claude|codex> --role reviewer --peer <me> \
      --channel C --generation 1 --prompt-file P \
-     --client-release 2.0.2 --root R --dir D
+     --client-release 2.0.3 --root R --dir D
    ```
 
 3. Require `launcher-ready` before spending a model turn. This proves the
@@ -67,8 +67,9 @@ not tool logs or hidden reasoning.
 When taking the floor, complete the launcher's transport handshake before
 reading repository files. The prompt discloses the exact bounded checkpoint
 body and command; verify their pinned path, channel, sender, generation, and
-body before running it. This proves model transport participation without blind
-execution or tokens spent composing status.
+body from the disclosed prompt, without a filesystem probe before running it.
+This proves model transport participation without blind execution or tokens
+spent composing status.
 Every later progress body must be written by the current agent and carry new
 evidence; a byte-identical consecutive progress body is rejected. Reviewers
 send progress after every three files inspected and every three candidate
@@ -87,6 +88,10 @@ While an agent holds the floor, only one of its current-generation message
 frames resets that clock; status, heartbeat, and activity ticks do not. The
 launcher records `semantic-timeout`, terminates the runtime, and exits 124 when
 the limit expires. The waiting peer may then resume it.
+Before the first frame, a running peer gets the shorter 60-second
+`first-frame-timeout`; a peer that exits while holding the floor gets
+`first-frame-exit`, and a false-success child status is converted to exit 70.
+Terminal peer control stops the launched runtime immediately.
 
 Claude launches with foreground Bash timeouts long enough for the default
 540-second `recv`. Call `recv` synchronously again after a silence timeout;
@@ -118,7 +123,7 @@ agent-comms resume --channel C --from <driver> --generation <driver-gen> \
 ```
 
 Launch the peer again with its incremented generation, `--root R`, and the same
-pinned `--client-release 2.0.2`. Pass the current artifact when one exists. The
+pinned `--client-release 2.0.3`. Pass the current artifact when one exists. The
 launcher verifies its hash and injects the original task body, task checksum,
 handoff, and artifact checksum; never replay the full transcript or fall
 forward to `current`. Late old-generation frames remain visible but are

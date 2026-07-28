@@ -8,7 +8,7 @@ ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-comms-v2-e2e.XXXXXX")"
 COMMS="$ROOT/comms"
 mkdir -p "$COMMS"
 trap 'rm -rf "$ROOT"' EXIT
-RELEASE_ROOT="$ROOT/cache/2.0.2"
+RELEASE_ROOT="$ROOT/cache/2.0.3"
 mkdir -p "$(dirname "$RELEASE_ROOT")"
 cp -R "$DIR" "$RELEASE_ROOT"
 bash "$DIR/bin/release.sh" manifest --root "$RELEASE_ROOT"
@@ -26,7 +26,7 @@ printf 'no important findings' > "$ROOT/replacement-final"
 printf 'approved' > "$ROOT/approval"
 
 bash "$AC" init --channel review --dir "$COMMS" --session e2e \
-  --driver codex --peer claude --release 2.0.2 \
+  --driver codex --peer claude --release 2.0.3 \
   --digest "$RELEASE_DIGEST" \
   --protocol 2 --release-root "$RELEASE_ROOT"
 bash "$AC" send --channel review --dir "$COMMS" --from codex --generation 1 \
