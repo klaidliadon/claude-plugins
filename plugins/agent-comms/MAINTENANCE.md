@@ -64,7 +64,7 @@ budget is eight 512-byte frames; launcher instructions cap each normal
 checkpoint at 256 bytes.
 
 Until the runtime lands its first current-generation frame, the launcher uses a
-separate 60-second deadline, configurable through the positive integer
+separate 180-second deadline, configurable through the positive integer
 `AGENT_COMMS_FIRST_FRAME_TIMEOUT` and clamped to the session semantic limit.
 Expiry appends `first-frame-timeout` with `transport=unconfirmed`, terminates
 the runtime, and exits 124. This diagnoses launch-environment transport failures
@@ -72,6 +72,9 @@ without waiting for the mid-turn semantic deadline.
 If a runtime exits while it owns the floor without landing that first frame,
 the launcher instead appends `first-frame-exit`; a reported child status of zero
 is converted to exit 70 so missing transport participation cannot pass.
+After a current-generation frame, a nonterminal runtime exit remains visible as
+lifecycle status and makes the waiting peer's `recv` return `__PEER_EXIT__`
+with exit 4, so the driver can resume immediately.
 
 The 300-second default is the maximum interval between evidence-bearing
 updates, not a total review deadline. Larger values are explicit per-session
@@ -160,7 +163,7 @@ Every changed bundle gets a new version. Never reuse an installed version.
 5. On a clean branch, run `agent-comms release check`, then
    `agent-comms release publish`.
 
-For v2.0.3 the immutable tag is `agent-comms--v2.0.3`. `publish` rechecks the
+For v2.0.4 the immutable tag is `agent-comms--v2.0.4`. `publish` rechecks the
 bundle, creates and pushes that unmoving tag, refreshes the marketplace,
 performs the normal update transaction, and runs post-activation `doctor`.
 Rollback moves only `current`; a bad published tag is never moved or reused.

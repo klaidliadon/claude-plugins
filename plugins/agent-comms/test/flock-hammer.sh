@@ -9,7 +9,7 @@ FILE="$TMP/channel.md"
 N=100
 
 perl "$PROTOCOL" init --file "$FILE" --session hammer \
-  --driver codex --peer claude --release 2.0.3 \
+  --driver codex --peer claude --release 2.0.4 \
   --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --protocol 2 --release-root "$TMP/release"
 printf 'writer codex' > "$TMP/codex.body"
