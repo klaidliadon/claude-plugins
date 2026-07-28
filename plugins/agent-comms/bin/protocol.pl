@@ -847,7 +847,9 @@ sub cmd_recv {
             $last_frame = time();
             next if $frame->{stale};
             next if $frame->{sender} eq $me;
-            if ($frame->{kind} eq "status" && $frame->{tag} =~ /^exit=(\d+)$/) {
+            if ($frame->{kind} eq "status" &&
+                $frame->{generation} == $session->{generation}{$frame->{sender}} &&
+                $frame->{tag} =~ /^exit=(\d+)$/) {
                 $peer_exit = { frame => $frame, status => $1 };
                 next;
             }

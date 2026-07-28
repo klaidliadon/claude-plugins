@@ -216,6 +216,13 @@ test_recv_reports_peer_exit_during_open_turn() {
   printf 'completed after resume' > "$FIXTURE/resumed"
   perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
     --replace claude --body-file "$FIXTURE/handoff"
+  output="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me codex \
+    --generation 1 --silence-seconds 0.2 --turn-seconds 100)"
+  status="$?"
+  assert_eq "$status" "2"
+  assert_contains "$output" '__SILENCE_TIMEOUT__'
+  assert_not_contains "$output" '__PEER_EXIT__'
+
   perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 2 \
     --kind message --state over --tag=- --body-file "$FIXTURE/resumed"
   output="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me codex \
