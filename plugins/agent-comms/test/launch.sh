@@ -187,8 +187,13 @@ test_launch_adapters() {
   assert_not_contains "$claude_input" 'checkpoint; phase complete; next=continue'
   assert_eq "$third_line" '## Transport handshake'
   assert_contains "$claude_input" 'Your first transport action is receive'
-  assert_contains "$claude_input" 'Verify those disclosed values from this prompt only'
-  assert_contains "$claude_input" 'run no other tool before this command'
+  assert_contains "$claude_input" \
+    'Before running it, you may inspect only the disclosed checkpoint body file'
+  assert_contains "$claude_input" \
+    'The checkpoint acknowledges task delivery only; it does not approve'
+  assert_not_contains "$claude_input" 'from this prompt only'
+  assert_not_contains "$claude_input" 'run no other tool before this command'
+  assert_not_contains "$claude_input" 'do not inspect the filesystem'
   assert_not_contains "$claude_input" 'Before repository inspection, verify'
   assert_not_contains "$claude_input" 'do not reason'
   assert_not_contains "$claude_input" 'without reasoning'
@@ -454,7 +459,7 @@ test_first_frame_timeout_is_enforced() {
   rm -rf "$FIXTURE"
 }
 
-test_first_frame_timeout_defaults_to_120_seconds() {
+test_first_frame_timeout_defaults_to_180_seconds() {
   new_launch_fixture
   init_launch_channel first-frame-default --semantic-timeout 300
   printf 'review but never reach the transport' > "$FIXTURE/task"
@@ -472,7 +477,7 @@ test_first_frame_timeout_defaults_to_120_seconds() {
   local raw
   raw="$(cat "$COMMS/first-frame-default.md")"
   assert_contains "$raw" 'tag=first-frame-timeout'
-  assert_contains "$raw" 'limit=120s'
+  assert_contains "$raw" 'limit=180s'
   rm -rf "$FIXTURE"
 }
 
@@ -1097,7 +1102,7 @@ else
   test_heartbeat_and_lifecycle
   test_semantic_progress_timeout_is_enforced
   test_first_frame_timeout_is_enforced
-  test_first_frame_timeout_defaults_to_120_seconds
+  test_first_frame_timeout_defaults_to_180_seconds
   test_first_frame_clean_exit_fails_closed
   test_recv_reports_child_exit_after_checkpoint
   test_terminal_control_stops_runtime

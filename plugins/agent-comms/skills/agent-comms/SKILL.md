@@ -69,10 +69,11 @@ wait for the semantic deadline.
 
 When taking the floor, complete the launcher's transport handshake before
 reading repository files. The prompt discloses the exact bounded checkpoint
-body and command; verify their pinned path, channel, sender, generation, and
-body from the disclosed prompt, without a filesystem probe before running it.
-This proves model transport participation without blind execution or tokens
-spent composing status.
+body and command. Verify their pinned path, channel, sender, generation, and
+body; read-only inspection of the checkpoint body file and pinned executable is
+allowed. Do not inspect the task, artifact, or repository first. The checkpoint
+acknowledges task delivery, not approval. This proves model transport
+participation without blind execution or tokens spent composing status.
 Every later progress body must be written by the current agent and carry new
 evidence; a byte-identical consecutive progress body is rejected. Reviewers
 send progress after every three files inspected and every three candidate
@@ -91,7 +92,7 @@ While an agent holds the floor, only one of its current-generation message
 frames resets that clock; status, heartbeat, and activity ticks do not. The
 launcher records `semantic-timeout`, terminates the runtime, and exits 124 when
 the limit expires. The waiting peer may then resume it.
-Before the first frame, a running peer gets the shorter 120-second
+Before the first frame, a running peer gets the shorter 180-second
 `first-frame-timeout`; a peer that exits while holding the floor gets
 `first-frame-exit`, and a false-success child status is converted to exit 70.
 Terminal peer control stops the launched runtime immediately.

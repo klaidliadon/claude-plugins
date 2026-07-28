@@ -64,7 +64,7 @@ budget is eight 512-byte frames; launcher instructions cap each normal
 checkpoint at 256 bytes.
 
 Until the runtime lands its first current-generation frame, the launcher uses a
-separate 120-second deadline, configurable through the positive integer
+separate 180-second deadline, configurable through the positive integer
 `AGENT_COMMS_FIRST_FRAME_TIMEOUT` and clamped to the session semantic limit.
 Expiry appends `first-frame-timeout` with `transport=unconfirmed`, terminates
 the runtime, and exits 124. This diagnoses launch-environment transport failures

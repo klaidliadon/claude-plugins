@@ -609,8 +609,9 @@ PROMPT_TITLE="$(sed -n '1p' "$PROMPT_FILE")"
   cat "$CHECKPOINT_BODY_FILE"
   printf '\n\nCheckpoint command:\n\n    %s\n\n' "$CHECKPOINT_COMMAND"
   printf 'This appends only the disclosed body to this session'\''s local channel.\n'
-  printf 'Verify those disclosed values from this prompt only; do not inspect the filesystem or run a verification tool.\n'
-  printf 'Apart from the required receive above when present, run no other tool before this command; execute it as your next transport action.\n\n'
+  printf 'Before running it, you may inspect only the disclosed checkpoint body file, pinned agent-comms executable, channel path, sender, and generation.\n'
+  printf 'The checkpoint acknowledges task delivery only; it does not approve the task or artifact.\n'
+  printf 'Complete this bounded verification and checkpoint before inspecting the task, artifact, or repository.\n\n'
   printf 'After that command succeeds, continue with the instructions below.\n\n'
   sed -n '2,$p' "$PROMPT_FILE"
   printf '\n## Agent-comms v2 transport\n\n'
@@ -653,7 +654,7 @@ case "$HEARTBEAT_AFTER" in ''|*[!0-9]*) fail_launch "bad heartbeat delay";; esac
 case "$HEARTBEAT_INTERVAL" in ''|*[!0-9]*) fail_launch "bad heartbeat interval";; esac
 [ "$HEARTBEAT_AFTER" -gt 0 ] && [ "$HEARTBEAT_INTERVAL" -gt 0 ] ||
   fail_launch "heartbeat values must be positive"
-FIRST_FRAME_TIMEOUT="${AGENT_COMMS_FIRST_FRAME_TIMEOUT:-120}"
+FIRST_FRAME_TIMEOUT="${AGENT_COMMS_FIRST_FRAME_TIMEOUT:-180}"
 case "$FIRST_FRAME_TIMEOUT" in ''|*[!0-9]*) fail_launch "bad first-frame timeout";; esac
 [ "$FIRST_FRAME_TIMEOUT" -gt 0 ] || fail_launch "first-frame timeout must be positive"
 # A missing first frame is diagnosed sooner than a mid-turn stall, but the
