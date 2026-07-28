@@ -99,8 +99,9 @@ from Bash writes even when it is passed through `--add-dir`. Claude receives
 silently backgrounded by the host. `launcher-ready` means adapter/transport
 readiness only. The model must publish its own first `continue` checkpoint
 before repository inspection. The bootstrap discloses the exact body and
-command and tells the model to verify the pinned path and session arguments
-from the prompt itself, without a filesystem probe before the checkpoint.
+command and permits read-only inspection of those disclosed transport inputs
+before the checkpoint. The checkpoint acknowledges delivery, not approval; the
+model must not inspect the task, artifact, or repository first.
 Later progress bodies are agent-written and must carry new evidence. Claude
 `--safe-mode`, `--bare`, and
 `CLAUDE_CODE_SAFE_MODE=1` are
