@@ -19,7 +19,7 @@ init_fixture() {
     --session session-1 \
     --driver codex \
     --peer claude \
-    --release 2.0.3 \
+    --release 2.0.4 \
     --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --protocol 2 \
     --release-root "$FIXTURE/release"
@@ -56,7 +56,7 @@ start_partial_append() {
 }
 
 prepare_public_release() {
-  PUBLIC_RELEASE="$FIXTURE/cache/2.0.3"
+  PUBLIC_RELEASE="$FIXTURE/cache/2.0.4"
   mkdir -p "$(dirname "$PUBLIC_RELEASE")"
   cp -R "$DIR" "$PUBLIC_RELEASE"
   bash "$DIR/bin/release.sh" manifest --root "$PUBLIC_RELEASE"
@@ -99,7 +99,7 @@ test_semantic_timeout_metadata() {
     --session session-1 \
     --driver codex \
     --peer claude \
-    --release 2.0.3 \
+    --release 2.0.4 \
     --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --protocol 2 \
     --release-root "$FIXTURE/release" \
@@ -112,7 +112,7 @@ test_semantic_timeout_metadata() {
     --session max \
     --driver codex \
     --peer claude \
-    --release 2.0.3 \
+    --release 2.0.4 \
     --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --protocol 2 \
     --release-root "$FIXTURE/release" \
@@ -122,7 +122,7 @@ test_semantic_timeout_metadata() {
     --session zero \
     --driver codex \
     --peer claude \
-    --release 2.0.3 \
+    --release 2.0.4 \
     --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --protocol 2 \
     --release-root "$FIXTURE/release" \
@@ -132,7 +132,7 @@ test_semantic_timeout_metadata() {
     --session too-long \
     --driver codex \
     --peer claude \
-    --release 2.0.3 \
+    --release 2.0.4 \
     --digest aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     --protocol 2 \
     --release-root "$FIXTURE/release" \
@@ -290,7 +290,7 @@ test_public_cli_defaults_to_over() {
   local comms="$FIXTURE/comms"
   mkdir -p "$comms"
   bash "$PUBLIC_AC" init --channel cli --dir "$comms" --session session-1 \
-    --driver codex --peer claude --release 2.0.3 \
+    --driver codex --peer claude --release 2.0.4 \
     --digest "$PUBLIC_DIGEST" \
     --protocol 2 --release-root "$PUBLIC_RELEASE"
   bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
@@ -410,7 +410,7 @@ test_public_resume_command() {
   printf 'handoff' > "$FIXTURE/handoff"
   printf 'partial artifact' > "$FIXTURE/artifact"
   bash "$PUBLIC_AC" init --channel cli --dir "$comms" --session session-1 \
-    --driver codex --peer claude --release 2.0.3 \
+    --driver codex --peer claude --release 2.0.4 \
     --digest "$PUBLIC_DIGEST" \
     --protocol 2 --release-root "$PUBLIC_RELEASE"
   bash "$PUBLIC_AC" send --channel cli --dir "$comms" --from codex --generation 1 \
@@ -522,7 +522,7 @@ test_progress_budget() {
   dd if=/dev/zero of="$FIXTURE/progress" bs=512 count=1 2>/dev/null
   dd if=/dev/zero of="$FIXTURE/final-large" bs=1024 count=1 2>/dev/null
   bash "$PUBLIC_AC" init --channel budget --dir "$comms" --session session-1 \
-    --driver codex --peer claude --release 2.0.3 \
+    --driver codex --peer claude --release 2.0.4 \
     --digest "$PUBLIC_DIGEST" \
     --protocol 2 --release-root "$PUBLIC_RELEASE" \
     --progress-frames 4 --progress-bytes 512
@@ -577,7 +577,7 @@ session=session-1
 role=claude
 generation=2
 open_turn=2
-release=2.0.3
+release=2.0.4
 digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 protocol=2
 release_root=$FIXTURE/release

@@ -5,7 +5,7 @@ SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 HERE="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 source "$HERE/lib.sh"
 
-CLIENT_RELEASE="2.0.3"
+CLIENT_RELEASE="2.0.4"
 
 fail_launch() {
   echo "agent-comms launch: $*" >&2
@@ -653,7 +653,7 @@ case "$HEARTBEAT_AFTER" in ''|*[!0-9]*) fail_launch "bad heartbeat delay";; esac
 case "$HEARTBEAT_INTERVAL" in ''|*[!0-9]*) fail_launch "bad heartbeat interval";; esac
 [ "$HEARTBEAT_AFTER" -gt 0 ] && [ "$HEARTBEAT_INTERVAL" -gt 0 ] ||
   fail_launch "heartbeat values must be positive"
-FIRST_FRAME_TIMEOUT="${AGENT_COMMS_FIRST_FRAME_TIMEOUT:-60}"
+FIRST_FRAME_TIMEOUT="${AGENT_COMMS_FIRST_FRAME_TIMEOUT:-120}"
 case "$FIRST_FRAME_TIMEOUT" in ''|*[!0-9]*) fail_launch "bad first-frame timeout";; esac
 [ "$FIRST_FRAME_TIMEOUT" -gt 0 ] || fail_launch "first-frame timeout must be positive"
 # A missing first frame is diagnosed sooner than a mid-turn stall, but the

@@ -304,11 +304,11 @@ test_v2_release_contract_is_consistent() {
   launcher="$(cat "$DIR/bin/launch.sh")"
   cli="$(cat "$DIR/bin/agent-comms")"
   library="$(cat "$DIR/bin/lib.sh")"
-  assert_contains "$plugin" '"version": "2.0.3"'
-  assert_contains "$manifest" 'release 2.0.3'
-  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.3"'
-  assert_contains "$skill" '--client-release 2.0.3'
-  assert_contains "$maintenance" 'agent-comms--v2.0.3'
+  assert_contains "$plugin" '"version": "2.0.4"'
+  assert_contains "$manifest" 'release 2.0.4'
+  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.4"'
+  assert_contains "$skill" '--client-release 2.0.4'
+  assert_contains "$maintenance" 'agent-comms--v2.0.4'
   assert_not_contains "$skill" 'claude-review'
   assert_not_contains "$skill" 'codex-review'
   assert_not_contains "$skill" 'install-codex'
