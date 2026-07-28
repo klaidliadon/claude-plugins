@@ -481,6 +481,29 @@ test_first_frame_timeout_defaults_to_180_seconds() {
   rm -rf "$FIXTURE"
 }
 
+test_first_frame_timeout_clamps_to_semantic_limit() {
+  new_launch_fixture
+  init_launch_channel first-frame-clamped --semantic-timeout 5
+  printf 'review but never reach the transport' > "$FIXTURE/task"
+  bash "$AC" send --channel first-frame-clamped --root "$WORK_ROOT" \
+    --dir "$COMMS" --from codex --generation 1 --body-file "$FIXTURE/task"
+
+  FAKE_ARGS="$FIXTURE/first-frame-clamped.args" \
+    FAKE_STDIN="$FIXTURE/first-frame-clamped.stdin" FAKE_SLEEP=20 \
+    FAKE_DATE_COUNTER="$FIXTURE/date.counter" PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel first-frame-clamped --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.4 \
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
+  assert_eq "$?" "124"
+  local raw
+  raw="$(cat "$COMMS/first-frame-clamped.md")"
+  assert_contains "$raw" 'tag=first-frame-timeout'
+  assert_contains "$raw" 'limit=5s'
+  assert_not_contains "$raw" 'limit=180s'
+  rm -rf "$FIXTURE"
+}
+
 test_first_frame_clean_exit_fails_closed() {
   new_launch_fixture
   init_launch_channel first-frame-exit --semantic-timeout 30
@@ -1103,6 +1126,7 @@ else
   test_semantic_progress_timeout_is_enforced
   test_first_frame_timeout_is_enforced
   test_first_frame_timeout_defaults_to_180_seconds
+  test_first_frame_timeout_clamps_to_semantic_limit
   test_first_frame_clean_exit_fails_closed
   test_recv_reports_child_exit_after_checkpoint
   test_terminal_control_stops_runtime
