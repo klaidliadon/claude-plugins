@@ -516,6 +516,31 @@ test_first_frame_clean_exit_fails_closed() {
   rm -rf "$FIXTURE"
 }
 
+test_recv_reports_child_exit_after_checkpoint() {
+  new_launch_fixture
+  init_launch_channel post-checkpoint-exit --semantic-timeout 30
+  printf 'review until runtime exits' > "$FIXTURE/task"
+  bash "$AC" send --channel post-checkpoint-exit --root "$WORK_ROOT" \
+    --dir "$COMMS" --from codex --generation 1 --body-file "$FIXTURE/task"
+
+  FAKE_ARGS="$FIXTURE/post-checkpoint-exit.args" \
+    FAKE_STDIN="$FIXTURE/post-checkpoint-exit.stdin" \
+    FAKE_RUN_CHECKPOINT=1 FAKE_EXIT=7 PATH="$FAKEBIN:$PATH" \
+    bash "$AC" launch claude --role reviewer --peer codex \
+    --channel post-checkpoint-exit --generation 1 \
+    --prompt-file "$FIXTURE/prompt" --client-release 2.0.4 \
+    --root "$WORK_ROOT" --dir "$COMMS" >/dev/null 2>&1
+  assert_eq "$?" "7"
+  local output status
+  output="$(bash "$AC" recv --channel post-checkpoint-exit --me codex \
+    --generation 1 --timeout 1 --root "$WORK_ROOT" --dir "$COMMS")"
+  status="$?"
+  assert_eq "$status" "4"
+  assert_contains "$output" \
+    '__PEER_EXIT__ session=post-checkpoint-exit turn=2 sender=claude gen=1 status=7'
+  rm -rf "$FIXTURE"
+}
+
 test_terminal_control_stops_runtime() {
   new_launch_fixture
   init_launch_channel terminal-stop --semantic-timeout 30
@@ -1074,6 +1099,7 @@ else
   test_first_frame_timeout_is_enforced
   test_first_frame_timeout_defaults_to_120_seconds
   test_first_frame_clean_exit_fails_closed
+  test_recv_reports_child_exit_after_checkpoint
   test_terminal_control_stops_runtime
   test_first_frame_timeout_validation
   test_semantic_progress_resets_timeout

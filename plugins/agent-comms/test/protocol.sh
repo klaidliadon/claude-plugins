@@ -191,6 +191,40 @@ test_recv_silence_ignores_old_frames() {
   rm -rf "$FIXTURE"
 }
 
+test_recv_reports_peer_exit_during_open_turn() {
+  new_fixture
+  init_fixture
+  printf 'review this' > "$FIXTURE/task"
+  printf 'started' > "$FIXTURE/checkpoint"
+  printf 'runtime=claude role=reviewer generation=1' > "$FIXTURE/exit"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender codex --generation 1 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/task"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind message --state continue --tag=- --body-file "$FIXTURE/checkpoint"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 1 \
+    --kind status --state none --tag=exit=7 --body-file "$FIXTURE/exit"
+
+  local output status
+  output="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me codex \
+    --generation 1 --silence-seconds 0.2 --turn-seconds 1)"
+  status="$?"
+  assert_eq "$status" "4"
+  assert_contains "$output" \
+    '__PEER_EXIT__ session=session-1 turn=2 sender=claude gen=1 status=7'
+
+  printf 'resume after peer exit' > "$FIXTURE/handoff"
+  printf 'completed after resume' > "$FIXTURE/resumed"
+  perl "$PROTOCOL" resume --file "$CHANNEL" --driver codex --generation 1 \
+    --replace claude --body-file "$FIXTURE/handoff"
+  perl "$PROTOCOL" append --file "$CHANNEL" --sender claude --generation 2 \
+    --kind message --state over --tag=- --body-file "$FIXTURE/resumed"
+  output="$(perl "$PROTOCOL" recv --file "$CHANNEL" --cursor "$CURSOR" --me codex \
+    --generation 1 --silence-seconds 0.2 --turn-seconds 1)"
+  assert_contains "$output" 'completed after resume'
+  assert_not_contains "$output" '__PEER_EXIT__'
+  rm -rf "$FIXTURE"
+}
+
 test_wait_control_requires_declared_sender() {
   new_fixture
   init_fixture
@@ -619,6 +653,7 @@ else
   test_turn_state_machine
   test_recv_coalesces_complete_turn
   test_recv_silence_ignores_old_frames
+  test_recv_reports_peer_exit_during_open_turn
   test_wait_control_requires_declared_sender
   test_readers_wait_for_locked_append
   test_recv_rejects_floor_owner_immediately

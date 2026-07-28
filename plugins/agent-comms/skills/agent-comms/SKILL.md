@@ -63,6 +63,9 @@ agent-comms recv --channel C --me <me> --generation N --dir D
 excluding heartbeats/status. Never poll after `--continue`; keep working.
 Progress is capped at eight 512-byte fragments per turn. Send useful conclusions,
 not tool logs or hidden reasoning.
+If the peer runtime exits during an open turn, `recv` returns
+`__PEER_EXIT__ ... status=N` immediately with exit 4. Resume that peer; do not
+wait for the semantic deadline.
 
 When taking the floor, complete the launcher's transport handshake before
 reading repository files. The prompt discloses the exact bounded checkpoint
@@ -114,8 +117,8 @@ Activity never yields or wakes `recv`; never relay it to the waiting model.
 
 ## Resume an interrupted peer
 
-On `__TURN_TIMEOUT__`, stop the old launcher process, write a bounded handoff,
-then fence and replace the current floor holder:
+On `__TURN_TIMEOUT__` or `__PEER_EXIT__`, stop or reap the old launcher process,
+write a bounded handoff, then fence and replace the current floor holder:
 
 ```text
 agent-comms resume --channel C --from <driver> --generation <driver-gen> \

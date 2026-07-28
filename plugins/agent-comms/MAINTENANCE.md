@@ -72,6 +72,9 @@ without waiting for the mid-turn semantic deadline.
 If a runtime exits while it owns the floor without landing that first frame,
 the launcher instead appends `first-frame-exit`; a reported child status of zero
 is converted to exit 70 so missing transport participation cannot pass.
+After a current-generation frame, a nonterminal runtime exit remains visible as
+lifecycle status and makes the waiting peer's `recv` return `__PEER_EXIT__`
+with exit 4, so the driver can resume immediately.
 
 The 300-second default is the maximum interval between evidence-bearing
 updates, not a total review deadline. Larger values are explicit per-session

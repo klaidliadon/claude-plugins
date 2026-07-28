@@ -810,6 +810,7 @@ sub cmd_recv {
     my $started = time();
     my $last_frame = $started;
     my $turn_started;
+    my $peer_exit;
     my %seen;
     my @semantic;
     while (1) {
@@ -846,6 +847,10 @@ sub cmd_recv {
             $last_frame = time();
             next if $frame->{stale};
             next if $frame->{sender} eq $me;
+            if ($frame->{kind} eq "status" && $frame->{tag} =~ /^exit=(\d+)$/) {
+                $peer_exit = { frame => $frame, status => $1 };
+                next;
+            }
             if ($frame->{kind} eq "control" && $frame->{state} eq "terminal") {
                 push @semantic, $frame;
                 $complete_end = $frame->{end};
@@ -863,6 +868,13 @@ sub cmd_recv {
             write_cursor($cursor, $complete_end);
             print $_->{block} for @semantic;
             return;
+        }
+        if ($peer_exit && $session && !$session->{terminal}) {
+            my $frame = $peer_exit->{frame};
+            print "__PEER_EXIT__ session=$session->{session} turn=$frame->{turn} " .
+                "sender=$frame->{sender} gen=$frame->{generation} " .
+                "status=$peer_exit->{status}\n";
+            exit 4;
         }
         if (!@semantic && $session && !$session->{terminal} && $session->{expected} eq $me) {
             fail("$me owns the floor and must send before recv");
