@@ -46,6 +46,12 @@
       "description": "Go backend service layout: cmd/rpc/data/clients/tests structure, patterns, and anti-patterns.",
       "source": "./plugins/service-skeleton",
       "category": "development"
+    },
+    {
+      "name": "gh-stack",
+      "description": "GitHub-native stacked pull requests via the gh-stack CLI extension — create, sync, navigate, and atomically merge PR stacks. Supersedes sdf.",
+      "source": "./plugins/gh-stack",
+      "category": "git"
     }
   ]
 }

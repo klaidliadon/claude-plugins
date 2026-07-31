@@ -1,0 +1,8 @@
+{
+  "name": "gh-stack",
+  "version": "0.1.0",
+  "description": "GitHub-native stacked pull requests via the gh-stack CLI extension: create, sync, navigate, and atomically merge PR stacks.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}
