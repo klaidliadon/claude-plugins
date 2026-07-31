@@ -40,6 +40,12 @@
       "description": "Go style conventions: new(value) for *T fields, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
       "source": "./plugins/go-style",
       "category": "development"
+    },
+    {
+      "name": "service-skeleton",
+      "description": "Go backend service layout: cmd/rpc/data/clients/tests structure, patterns, and anti-patterns.",
+      "source": "./plugins/service-skeleton",
+      "category": "development"
     }
   ]
 }

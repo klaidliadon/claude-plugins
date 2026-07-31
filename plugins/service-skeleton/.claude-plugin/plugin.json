@@ -1,0 +1,8 @@
+{
+  "name": "service-skeleton",
+  "version": "1.0.0",
+  "description": "Go backend service layout: cmd/rpc/data/clients/tests structure, patterns, and anti-patterns.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}
