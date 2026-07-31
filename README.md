@@ -6,6 +6,7 @@ Personal Claude Code plugin marketplace.
 
 - **git-cleanup** — Audit local branches and worktrees against GitHub PR state, auto-clean unambiguously safe branches, prompt on the rest. Conservative, stack-aware via sdf, with `--all` sweep across `~/Workspace` and `--dry-run`. Slash command: `/git-cleanup`.
 - **ridl-lsp** — RIDL language server for `.ridl` schema files.
+- **gh-stack** — GitHub-native stacked pull requests via the `gh-stack` CLI extension: create, sync, navigate, and atomically merge PR stacks. Supersedes sdf on repos where the public preview is enabled.
 
 ## Install
 
