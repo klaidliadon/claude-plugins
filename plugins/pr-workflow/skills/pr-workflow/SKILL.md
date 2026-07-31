@@ -44,18 +44,28 @@ Architecture, intent, tradeoffs. Address requested changes, re-request review.
 
 ## Pull request descriptions
 
-PR bodies have two audiences. The top is for humans skimming on GitHub; the bottom is the audit trail for bots, future Claude sessions, and archaeology.
+Format rules are canonical in global CLAUDE.md → Git → PR descriptions (cross-agent). Below: the template and the mechanics.
 
-Structure:
-- **Top (human, no headers):** one or two prose sentences. The *why*, not the *what*. Examples: "There's a race condition in token refresh — fixed by serializing with a singleflight group." / "Need this because the new auth flow can't tolerate the existing retry behavior."
-- **`---` separator** — everything above it is for humans, everything below is for the record.
-- **Bottom (structured):** test plan (commands actually run + output, not aspirational checklists), implementation notes, references. Headings are fine down here.
+Every PR body:
 
-Do not:
-- Open with `## Summary` and rehash the diff — the reviewer is about to read it.
-- Add `🤖 Generated with Claude Code` footers — pure noise.
-- Write test plans as wishlists (`- [ ] Verify edge cases`). Either you ran it (paste the command + result) or you didn't (say so).
-- Hard-wrap paragraph prose at ~80 cols. GFM in PR/issue/comment bodies renders a single newline as a hard line break, so wrapped lines display broken mid-sentence. One line per paragraph; blank lines separate paragraphs. (List items and table rows stay one per line; an intentional multi-line stack is fine — the break is the point there.)
+```markdown
+## Goal
+<1–3 plain sentences: what this change does and why it matters. A big change ends
+with a one-line before→after: "X goes from <old behavior> to <new behavior>.">
+
+## Problem it solves
+- <the concrete pain, stated so the reader can picture it happening — never an
+  abstraction like "security concerns">
+- <another, if any>
+
+## What changes                     <!-- multi-part PRs only; drop for small ones -->
+- **<plain-verb outcome>.** <one sentence of how, in plain words>
+- **<another moving part>.** <...>
+```
+
+- Test evidence, when shown, is real: command + pasted result. Never aspirational checklists (`- [ ] Verify edge cases`).
+- Chained/stacked PRs: the blocking callout goes first, above `## Goal` (see below).
+- Don't hard-wrap paragraph prose at ~80 cols. GFM in PR/issue/comment bodies renders a single newline as a hard line break, so wrapped lines display broken mid-sentence. One line per paragraph; blank lines separate paragraphs. (List items and table rows stay one per line; an intentional multi-line stack is fine — the break is the point there.)
 
 Bodies always via `--body-file` / `-F body=@…`, never heredoc — heredoc mangles backticks, fences, `!`, `"`. Don't escape backticks. Assemble the file with the Write tool (append boilerplate via `cp` + `printf >>` if needed) — never `printf … "$(cat draft.md)"`: command substitution always escalates the Bash call to a manual permission prompt, no matter how allowlisted the inner commands are.
 
