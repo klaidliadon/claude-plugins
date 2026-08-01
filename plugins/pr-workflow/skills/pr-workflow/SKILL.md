@@ -46,6 +46,14 @@ Architecture, intent, tradeoffs. Address requested changes, re-request review.
 
 Format rules are canonical in global CLAUDE.md → Git → PR descriptions (cross-agent). Below: the template and the mechanics.
 
+Optimize the first screen for context recovery. Assume the reviewer returns after another workstream. In about ten seconds, it must answer:
+
+- What changes?
+- Why does it matter?
+- Is any action, decision, or blocker waiting?
+
+If something is waiting, put one plain-language callout above `## Goal`. Otherwise start at `## Goal`. Put mechanism and evidence after the human summary.
+
 Every PR body:
 
 ```markdown

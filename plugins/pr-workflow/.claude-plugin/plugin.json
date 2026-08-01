@@ -1,6 +1,6 @@
 {
   "name": "pr-workflow",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Authoring a PR through the gated review pipeline: PR-description format, chained/dependent-PR merge-order rules, and code-review output convention.",
   "author": {
     "name": "klaidliadon"
