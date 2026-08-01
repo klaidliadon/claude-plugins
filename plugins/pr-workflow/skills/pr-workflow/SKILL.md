@@ -46,6 +46,13 @@ Architecture, intent, tradeoffs. Address requested changes, re-request review.
 
 Format rules are canonical in global CLAUDE.md → Git → PR descriptions (cross-agent). Below: the template and the mechanics.
 
+Before opening the PR, read only the first screen. Pretend you are returning after a context switch. It passes when:
+
+- The change and its impact are clear without opening the diff.
+- A waiting action, decision, or blocker is the first visible line and names who acts or what must happen.
+- With nothing waiting, the body starts at `## Goal` and adds no status boilerplate.
+- Mechanism and evidence follow the human summary.
+
 Every PR body:
 
 ```markdown
@@ -77,7 +84,7 @@ When the deliverable is a doc, spec, or plan landing on a `docs/...` or `spec/..
 
 When a change spans multiple PRs with a required merge/deploy order (a stack, or a cross-repo chain like schema → issuer → enforcer), the dependency is invisible to anyone who didn't write it. GitHub will let a reviewer merge the trailing PR first and break production. Make the chain explicit on **every** PR in it:
 
-- **First line of the body, before anything else, on any PR that is unsafe to merge until upstream ships:** a blocking callout naming what must land first. Example: `⚠️ BLOCKED: do not merge until <repo>#N is merged AND deployed to all envs. This enforces a contract the issuer does not yet satisfy; merging early 403s every caller.`
+- **First visible line of the body on any PR that is unsafe to merge until upstream ships:** a blocking callout naming what must land first. Example: `⚠️ BLOCKED: do not merge until <repo>#N is merged AND deployed to all envs. This enforces a contract the issuer does not yet satisfy; merging early 403s every caller.`
 - **State the full order and this PR's position in it:** `Stack: go-libs#56 → omsx#1271 (deploy) → this PR.` Note where a *deploy* (not just a merge) is the real gate — cross-repo chains usually gate on the upstream being live, not merged.
 - **Never write a claim in the present tense that depends on an unmerged PR.** "the grant shape OMSX emits" reads as "OMSX already emits it" and tells the merger it's safe. Say "will emit (omsx#1271, not yet deployed)" instead. A misleading Notes line is worse than a missing one — it manufactures false confidence.
 - Enforcement / breaking-validation PRs are the trailing PR by default. The thing that starts rejecting traffic ships last, after every producer is live.
