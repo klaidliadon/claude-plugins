@@ -1,11 +1,44 @@
 ---
 name: go-style
-description: Go style conventions to apply when writing, refactoring, or reviewing Go code in any of the user's repos — pointer-field initialization, import aliasing, logger naming, test shape, assertion collapsing, parser colocation. Load BEFORE writing Go; also use when reviewing Go diffs.
+description: Go style conventions to apply when writing, refactoring, or reviewing Go code in any of the user's repos — type design and composition, naming, error wrapping, pointer-field initialization, import aliasing, logger naming, test shape, assertion collapsing, parser colocation. Load BEFORE writing Go; also use when reviewing Go diffs.
 ---
 
 # Go style conventions
 
-Cross-project conventions confirmed by explicit feedback. They complement (never override) the global CLAUDE.md Go rules and any repo-local CLAUDE.md.
+Uber Go style guide as baseline. These are cross-project conventions confirmed by explicit feedback; they complement (never override) the global CLAUDE.md Go rules and any repo-local CLAUDE.md.
+
+## Type design
+
+Stateful → type with methods. Stateless → free function. Don't pretend either way.
+
+Composition, in order of preference:
+
+1. **Named-field DI.** Dependencies as named struct fields, wired through constructors. The default.
+2. **Anonymous embedding** only when method passthrough is the goal (e.g. `*pgkit.DB` inside `Database`).
+3. **Generic type parameters** when the same logic applies to multiple shapes (`Table[T, *T, ID]`, `cache.Simple[K, V]`, `Config[T]`).
+
+What stays a free function: constructors (`NewX`, `ParseX`), middleware factories (`func(...) func(http.Handler) http.Handler`), pure transformations without state, generic accessors (`GetUser[T]`).
+
+Anti-patterns: fat interfaces (compose small ones instead); interface-everything (concrete types are the default — interface at boundaries or for stubbing); `Helper` / `Util` types wrapping what should be plain functions.
+
+## Naming
+
+- `New*` constructors, `Parse*` from raw data, PascalCase with uppercase acronyms (`APIKeyTable`).
+- Packages: short, lowercase, no underscores. Unexported helpers named by action: `deriveName`, `buildRequest`.
+- Names describe behavior, not aspiration: `tokenSource`, not `VendorAuth`.
+
+## Errors
+
+Wrap with `fmt.Errorf("context: %w", err)` — lowercase, colon-separated.
+
+## Small mechanics
+
+- `cmp.Or(val, fallback)` over `if val == zero { val = fallback }` for simple defaults.
+- Extract repeated header/request setup into a helper — don't copy-paste across methods.
+
+## Time-sensitive tests
+
+Timers, tickers, expirations, and rate windows use `testing/synctest` (Go 1.25+ stdlib). Production code calls `time.Now().UTC()` / `time.Sleep` / timers normally — no `Clock` interface, no `utc.Now()` wrapper.
 
 ## `new(value)` for pointer fields (Go 1.26+)
 
