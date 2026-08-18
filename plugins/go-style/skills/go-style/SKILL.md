@@ -81,6 +81,17 @@ The exceptions are **standing, repo-wide rules**, never per-file judgment calls:
 
 One rule applied everywhere beats per-file "alias on collision" decisions. For genuine collisions elsewhere, prefer aliasing at the few real collision sites over renaming packages (and count importers of the package whose *identity* changes when weighing a rename — the folder path is incidental).
 
+### Standing mappings
+
+Apply these on sight, in every repo — no per-file decision:
+
+| Import | Alias | Why |
+|---|---|---|
+| `github.com/Masterminds/squirrel` | `sq` | Long-established convention; predates this rule. |
+| `github.com/0xPolygon/go-libs/config` | `libconfig` | `config` is too generic — `pkg/config` and `apps/<svc>/config` are both named `config`, so `libconfig.BasicAuth` reads unambiguously wherever it appears. |
+
+Anything else: bare import, even when the package name overlaps the current file's package.
+
 ## Logger naming
 
 `*slog.Logger` identifiers are `logger`, never `log` — parameters, struct fields, locals, and shadowed rebindings (`logger := logger.With(...)`). `log.X` reads ambiguously against the stdlib package; `logger.X` is unambiguously a value.

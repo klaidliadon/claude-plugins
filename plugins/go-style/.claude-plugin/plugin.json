@@ -1,6 +1,6 @@
 {
   "name": "go-style",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Go style conventions: type design and composition, naming, error wrapping, new(value) for *T fields, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
   "author": {
     "name": "klaidliadon"
