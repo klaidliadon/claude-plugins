@@ -30,9 +30,9 @@
       "category": "development"
     },
     {
-      "name": "pr-workflow",
-      "description": "Authoring a PR through the gated review pipeline: PR-description format, chained/dependent-PR merge-order rules, and code-review output convention.",
-      "source": "./plugins/pr-workflow",
+      "name": "gh-workflow",
+      "description": "Authoring GitHub PRs and issues: shared body-composition rules, PR-description and issue-body formats, the gated review pipeline, chained/dependent-PR merge order, and code-review output convention.",
+      "source": "./plugins/gh-workflow",
       "category": "git"
     },
     {
@@ -49,7 +49,7 @@
     },
     {
       "name": "gh-stack",
-      "description": "GitHub-native stacked pull requests via the gh-stack CLI extension — create, sync, navigate, and atomically merge PR stacks. Supersedes sdf.",
+      "description": "GitHub-native stacked pull requests via the gh-stack CLI extension — create, sync, navigate, and atomically merge PR stacks.",
       "source": "./plugins/gh-stack",
       "category": "git"
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// stack-check.mjs — read-only sdf/stack consistency probe.
+// stack-check.mjs — read-only stack consistency probe.
 //
 // For a stack of branches (bottom-to-top), reports per layer:
 //   - base@        : merge-base with the stack base (--base, default origin/master)

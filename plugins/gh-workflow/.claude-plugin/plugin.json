@@ -1,0 +1,8 @@
+{
+  "name": "gh-workflow",
+  "version": "1.3.0",
+  "description": "Authoring GitHub PRs and issues: shared body-composition rules, PR-description and issue-body formats, the gated review pipeline, chained/dependent-PR merge order, and code-review output convention.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}

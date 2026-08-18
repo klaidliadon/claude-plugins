@@ -1,13 +1,13 @@
 ---
 name: gh-stack
-description: Use when working with stacked PRs — chains of dependent pull requests — creating a stack, adding layers, syncing/rebasing after changes or merges, navigating between layers, or merging a stack. Use instead of raw git branch/rebase and gh pr commands, and instead of sdf, on repos where GitHub stacked pull requests are enabled.
+description: Use when working with stacked PRs — chains of dependent pull requests — creating a stack, adding layers, syncing/rebasing after changes or merges, navigating between layers, or merging a stack. Use instead of raw git branch/rebase and gh pr commands, on repos where GitHub stacked pull requests are enabled.
 ---
 
 # gh-stack — GitHub-native stacked PRs
 
-`gh stack` (official GitHub CLI extension) manages stacked PRs natively: branch topology, cascade rebases, PR bases, the stack UI on github.com, and atomic bottom-up merges. It supersedes sdf.
+`gh stack` (official GitHub CLI extension) manages stacked PRs natively: branch topology, cascade rebases, PR bases, the stack UI on github.com, and atomic bottom-up merges.
 
-**Availability:** public preview, rolling out per-repo. Exit code 9 (or API 404 on `repos/{owner}/{repo}/stacks`) means the repo isn't enabled yet — fall back to the sdf skill there.
+**Availability:** public preview, rolling out per-repo. Exit code 9 (or API 404 on `repos/{owner}/{repo}/stacks`) means the repo isn't enabled yet — fall back to manual git branch/rebase and `gh pr` there.
 
 Full manual: `gh stack <cmd> --help` and https://gh.io/stacks. Upstream agent skill: `gh skill preview github/gh-stack gh-stack`.
 
@@ -54,9 +54,3 @@ Exit codes: 3 rebase conflict · 6 branch in multiple stacks (check out a non-sh
 - Branches: `<feature>/<N>-<step>` (e.g. `2-step-login/1-schema`) — names are used verbatim, slashes fine
 - **One worktree per stack**, not per branch: cascade rebases must check out every branch, and git refuses to rebase a branch checked out in another worktree. Stack worktree: `<repo>/.worktree/<feature>-stack/`
 - Repos with their own stack automation (e.g. omsx's `stacked` label + `pr-auto-rebase.yml`): native retargeting overlaps with it — don't mix the two on one stack
-
-## Migrating an sdf stack
-
-1. `gh stack init <b1> <b2> <b3>` (bottom-to-top; adopts the existing branches), then `gh stack submit` — with open PRs deselect new ones and Ctrl+B to link, or non-interactively `gh stack link <pr1> <pr2> <pr3>`
-2. Strip `<!-- sdf:stack-nav -->` blocks from PR bodies — the native stack UI replaces them
-3. Stop running sdf on that stack; `sdf prune` clears stale metadata

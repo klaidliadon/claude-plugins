@@ -1,6 +1,6 @@
 ---
 name: git-cleanup
-description: Audit local branches and worktrees against GitHub PR state, auto-clean unambiguously safe branches, prompt on the rest. Conservative, stack-aware via sdf, with `--all` sweep across ~/Workspace and `--dry-run`. Use when user types `/git-cleanup` or asks to audit branches, clean up branches or PRs, prune stale branches, check what branches can be deleted, or tidy a repo.
+description: Audit local branches and worktrees against GitHub PR state, auto-clean unambiguously safe branches, prompt on the rest. Conservative, with `--all` sweep across ~/Workspace and `--dry-run`. Use when user types `/git-cleanup` or asks to audit branches, clean up branches or PRs, prune stale branches, check what branches can be deleted, or tidy a repo.
 ---
 
 # git-cleanup
@@ -40,7 +40,7 @@ this SKILL.md plus `/scripts`.
   node "$SKILL_SCRIPTS/audit.mjs" [--repo owner/repo] [--cwd DIR] [--json]
   ```
 
-- **`stack-check.mjs`** — sdf/stack consistency probe. For an ordered stack (bottom-to-top),
+- **`stack-check.mjs`** — stack consistency probe. For an ordered stack (bottom-to-top),
   reports per layer: merge-base with the stack base, whether it sits on the current base
   tip (restacked), whether it contains the layer below (chain intact), and ahead/behind vs
   its origin. Surfaces a partial restack at a glance.
@@ -49,7 +49,7 @@ this SKILL.md plus `/scripts`.
   node "$SKILL_SCRIPTS/stack-check.mjs" [--base origin/master] [--cwd DIR] layer1 layer2 … (bottom-to-top)
   ```
 
-Everything these wrap (`git *`, `gh *`, `jq *`, `sdf *`) is independently allowlisted, so
+Everything these wrap (`git *`, `gh *`, `jq *`) is independently allowlisted, so
 any step can also be run inline. Never reach for `python3`, standalone `VAR=`, `$(…)`, or a
 heredoc piped into `gh` — all of those escalate to a permission prompt.
 
@@ -59,9 +59,8 @@ Run unconditionally before classification, in this order:
 
 1. `git fetch --prune` (refreshes `[gone]` markers and merge state).
 2. `git worktree prune` (clears orphaned `.git/worktrees/<name>` metadata).
-3. If `.sdf/` exists at repo root, or `sdf ls` reports stacks, or a PR body contains `<!-- sdf:stack-nav -->`: run `sdf fetch && sdf sync`. On rebase conflict, abort branch cleanup for this repo with the conflict message.
 
-In `--dry-run`, still run `git fetch --prune`, `git worktree prune`, and `sdf fetch` (all read-only-effect). Skip `sdf sync` (rebases) and all destructive actions.
+In `--dry-run`, still run `git fetch --prune` and `git worktree prune` (both read-only-effect). Skip all destructive actions.
 
 ## Classification
 
@@ -86,7 +85,7 @@ For each local branch, evaluate the rules **top-down** and stop at the first mat
 
 Tie-break: if a branch matches multiple PRs (rare; closed-then-reopened), pick the most recent by `updatedAt`.
 
-Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO sweep, batched (see step 9 of the single-repo flow). Probe with `git ls-remote --heads origin <branch>` rather than relying on `git branch -vv` markers, because the local tracking ref may be stale or absent.
+Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO sweep, batched (see step 8 of the single-repo flow). Probe with `git ls-remote --heads origin <branch>` rather than relying on `git branch -vv` markers, because the local tracking ref may be stale or absent.
 
 ### Worktree handling derived from branch classification
 
@@ -110,8 +109,7 @@ Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO s
    - Capture worktree list: `git -C "$PWD" worktree list --porcelain`. Note which branch each worktree holds.
    - Run `git -C "$PWD" worktree prune`.
 2. **Refresh state.** `git -C "$PWD" fetch --prune`.
-3. **sdf reconcile** (if sdf detection signals fire). `sdf fetch && sdf sync`. On rebase conflict, abort: print the conflict location and the message `git-cleanup: aborting branch cleanup, resolve the sdf conflict and re-run`.
-4. **Enumerate + Classify.** Run `node "$SKILL_SCRIPTS/audit.mjs" --cwd "$PWD" --json` (see
+3. **Enumerate + Classify.** Run `node "$SKILL_SCRIPTS/audit.mjs" --cwd "$PWD" --json` (see
    [Helper scripts](#helper-scripts)). One call enumerates branches, worktrees + dirty state,
    pulls `gh pr list`, applies the truth table, and returns `{AUTO[], PROMPT[], NEVER[]}` with the
    reason and worktree path per branch. Fall back to the inline commands below only if the script
@@ -119,8 +117,8 @@ Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO s
    - `git -C "$PWD" for-each-ref --format='%(refname:short)\t%(upstream:short)\t%(upstream:track)' refs/heads/`.
    - `git -C "$PWD" worktree list --porcelain` (cross-reference worktree paths).
    - `gh pr list --state all --limit 1000 --json number,state,headRefName,updatedAt,url --repo <owner/repo>` once; cache by `headRefName`.
-5. **Bucket the PROMPT set** by reason for step 8: `closed PR`, `unpushed commits`, `no PR, never pushed`, `no PR, tracks <ref>`.
-6. **Print the plan.** Always, before executing any destructive action:
+4. **Bucket the PROMPT set** by reason for step 7: `closed PR`, `unpushed commits`, `no PR, never pushed`, `no PR, tracks <ref>`.
+5. **Print the plan.** Always, before executing any destructive action:
 
    ```
    git-cleanup audit: <repo-name>
@@ -130,34 +128,32 @@ Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO s
    NEVER  (N): branch-e [reason]  |  branch-f [reason]  |  ...
    ```
 
-7. **Execute AUTO set.** For each AUTO branch, in order:
+6. **Execute AUTO set.** For each AUTO branch, in order:
    - If a worktree holds it: `git -C "$PWD" worktree remove --force <worktree-path>`.
    - Then `git -C "$PWD" branch -D <branch>`.
    - Print one status line per action: `[AUTO] deleted <branch> (and worktree at <path>)`.
-8. **Walk PROMPT set, one batch per reason bucket.** For each bucket with N items:
+7. **Walk PROMPT set, one batch per reason bucket.** For each bucket with N items:
    - Print the bucket header and list each branch with its context.
    - For the "unpushed commits" bucket: show the count and the last commit subject per branch.
    - Ask: `<N> <bucket-reason>: delete all? [y/N/i]ndividual`.
    - `y`: delete all in the bucket (worktree-remove first, then `branch -D`).
    - `N`: skip the entire bucket.
    - `i`: fall through to per-branch `[y/N/s]kip` prompts.
-9. **Remote-deletion sub-prompt** (only for branches deleted via row 5 — merged PR — whose `origin/<branch>` still exists). After the main loop:
+8. **Remote-deletion sub-prompt** (only for branches deleted via row 5 — merged PR — whose `origin/<branch>` still exists). After the main loop:
    - For each row-5 AUTO branch, probe `git ls-remote --heads origin <branch>`. Collect those that return a non-empty result.
    - Ask: `Push-delete <N> merged remote branches on origin? [y/N/i]`.
    - On confirm: `git -C "$PWD" push origin --delete <branch>` per branch.
    - Hard rail: refuse to push-delete if the target is the default branch (defense in depth on row 2).
-10. **Stale-worktree sub-prompt.** Collect worktrees with detached HEAD, missing on-disk paths, or already-deleted branches. Ask: `Prune <N> stale worktree paths? [y/N/i]`. On confirm: `git -C "$PWD" worktree remove --force <path>` for paths that exist; `git -C "$PWD" worktree prune` to clean metadata for missing paths.
-11. **`sdf prune`** if sdf was detected in this repo.
-12. **Final summary.** Print counts: deleted (AUTO), deleted (PROMPT-confirmed), kept (PROMPT-declined), never-touched, errors.
+9. **Stale-worktree sub-prompt.** Collect worktrees with detached HEAD, missing on-disk paths, or already-deleted branches. Ask: `Prune <N> stale worktree paths? [y/N/i]`. On confirm: `git -C "$PWD" worktree remove --force <path>` for paths that exist; `git -C "$PWD" worktree prune` to clean metadata for missing paths.
+10. **Final summary.** Print counts: deleted (AUTO), deleted (PROMPT-confirmed), kept (PROMPT-declined), never-touched, errors.
 
 ## Dry-run flow (`/git-cleanup --dry-run`)
 
 Behaves like the single-repo flow with these differences:
 
-- Runs `git fetch --prune`, `git worktree prune`, `gh pr list`, and `sdf fetch` (all read-only-effect).
-- Does **not** run `sdf sync` (rebases the stack).
-- Prints the full plan exactly as in step 6 of the single-repo flow.
-- Exits before steps 7–12 with the message:
+- Runs `git fetch --prune`, `git worktree prune`, and `gh pr list` (all read-only-effect).
+- Prints the full plan exactly as in step 5 of the single-repo flow.
+- Exits before steps 6–10 with the message:
 
   ```
   dry-run: nothing changed. Re-run without --dry-run to execute.
@@ -185,10 +181,10 @@ For each candidate path:
 
 For each discovered repo, in sequence:
 
-- Run preflight + fetch + sdf reconcile + classify + execute the AUTO set silently.
+- Run preflight + fetch + classify + execute the AUTO set silently.
 - Print one compact line per repo when done: `<repo>: AUTO <n>, PROMPT <n>, NEVER <n>` or `<repo>: skipped (<reason>)`.
 - Collect PROMPT items into a global queue, each tagged with `<repo>: <branch> [reason]`.
-- Skip-reasons for the compact line: `sdf conflict`, `fetch failed`, `no origin remote`, `gh unavailable`.
+- Skip-reasons for the compact line: `fetch failed`, `no origin remote`, `gh unavailable`.
 
 ### Pass 2: batch-prompt globally, grouped by reason bucket
 
@@ -237,7 +233,6 @@ webrpc          1      0            0           3       0
 |---|---|
 | Not in a git repo (single mode) | Abort with message |
 | `gh` not installed or not authenticated | Degrade to rows 1–3 and 7–10 only (skip rows 4–6, which depend on PR match). One-line notice. |
-| `sdf sync` rebase conflict | Single mode: abort. Sweep mode: skip the repo, continue to the next. |
 | `git fetch` network failure | Abort (classification depends on fresh state). Single mode: exit. Sweep mode: skip the repo with reason `fetch failed`. |
 | Worktree path no longer on disk | Stale-worktree prompt, not an error. |
 | Currently inside a worktree on an otherwise-deletable branch | Mark NEVER. Print: `cd to main repo at <path> and re-run to delete <branch>`. |
@@ -249,8 +244,7 @@ webrpc          1      0            0           3       0
 1. Never push-delete a remote branch whose target is the repo's default branch.
 2. Never act on a branch that is the current branch in **any** worktree, not just `$PWD`.
 3. Never `git branch -D` before removing the worktree pointing at it.
-4. Never run `sdf prune` or `sdf sync` in a repo that does not use sdf.
-5. Never act in `--all` sweep without classifying first; no "delete first, ask later".
+4. Never act in `--all` sweep without classifying first; no "delete first, ask later".
 
 ## Out of scope
 
@@ -261,11 +255,3 @@ The skill does **not**:
 - Manage non-`origin` remotes beyond classifying their branches as PROMPT.
 - Support fork-based PR workflows (where `origin` is a fork and PRs live on upstream). PR matching will miss; affected branches degrade to the no-PR rows (7–10).
 - Descend into submodule checkouts during `--all` sweep.
-
-## Stack (sdf) integration: detection signals
-
-Run sdf reconcile when **any** of the following is true for the current repo:
-
-- `<repo>/.sdf/` directory exists.
-- `sdf ls` (run from the repo) returns at least one stack.
-- Any PR body fetched in step 4 contains the marker `<!-- sdf:stack-nav -->`.
