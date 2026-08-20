@@ -1,6 +1,6 @@
 ---
 name: writing-for-humans
-description: Use when writing or revising any human-facing text — a design proposal, PR description, doc, issue, commit body, or message — to make it read clearly for a human. The house readability standard: concise means simplify not compress; discursive prose over telegraphic fragments; show-don't-name with worked examples; pick prose/list/table/diagram by the shape of the information. Other writing skills (design-proposal, pr-authoring) delegate prose quality here.
+description: Use when writing or revising any human-facing text — a design proposal, PR description, doc, issue, commit body, or message — to make it read clearly for a human. The house readability standard — concise means simplify not compress; discursive prose over telegraphic fragments; show-don't-name with worked examples; pick prose/list/table/diagram by the shape of the information. Other writing skills (design-proposal, pr-authoring) delegate prose quality here.
 ---
 
 # Writing for Humans
