@@ -1,0 +1,8 @@
+{
+  "name": "design-proposal",
+  "version": "0.2.0",
+  "description": "Structure a decision-ready engineering design proposal: recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure for larger proposals, alternatives, and review reconciliation. Delegates prose quality to writing-for-humans.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}

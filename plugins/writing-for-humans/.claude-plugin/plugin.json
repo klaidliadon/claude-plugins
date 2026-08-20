@@ -1,0 +1,8 @@
+{
+  "name": "writing-for-humans",
+  "version": "0.1.0",
+  "description": "The house standard for writing prose a human reader can genuinely follow: concise means simplify not compress, discursive sentences over telegraphic fragments, show-don't-name with worked examples, and choosing prose/list/table/diagram by the shape of the information. Apply to any human-facing writing — proposals, PRs, docs, issues, messages.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}
