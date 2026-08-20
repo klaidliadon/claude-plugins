@@ -52,6 +52,18 @@
       "description": "GitHub-native stacked pull requests via the gh-stack CLI extension — create, sync, navigate, and atomically merge PR stacks.",
       "source": "./plugins/gh-stack",
       "category": "git"
+    },
+    {
+      "name": "writing-for-humans",
+      "description": "The house standard for writing prose a human reader can genuinely follow: concise means simplify not compress, discursive sentences, show-don't-name with worked examples, and choosing prose/list/table/diagram by the shape of the information. Apply to any human-facing writing.",
+      "source": "./plugins/writing-for-humans",
+      "category": "workflow"
+    },
+    {
+      "name": "design-proposal",
+      "description": "Structure a decision-ready engineering design proposal: recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure, alternatives, and review reconciliation. Delegates prose quality to writing-for-humans.",
+      "source": "./plugins/design-proposal",
+      "category": "workflow"
     }
   ]
 }
