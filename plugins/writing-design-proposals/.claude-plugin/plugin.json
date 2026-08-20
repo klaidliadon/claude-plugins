@@ -1,0 +1,8 @@
+{
+  "name": "writing-design-proposals",
+  "version": "0.2.0",
+  "description": "Write decision-ready engineering design proposals a human reader can genuinely follow: the argument (recommendation-first, facts vs recommendations), the layered design+plan/spec structure, and the human-readability standard (simplify don't compress, discursive prose, show-don't-name, format-by-shape).",
+  "author": {
+    "name": "klaidliadon"
+  }
+}

@@ -52,6 +52,12 @@
       "description": "GitHub-native stacked pull requests via the gh-stack CLI extension — create, sync, navigate, and atomically merge PR stacks.",
       "source": "./plugins/gh-stack",
       "category": "git"
+    },
+    {
+      "name": "writing-design-proposals",
+      "description": "Write decision-ready engineering design proposals a human reader can genuinely follow — the argument, source-authority discipline, the layered design+plan/spec structure, and the human-readability standard (simplify don't compress, discursive prose, show-don't-name, format-by-shape).",
+      "source": "./plugins/writing-design-proposals",
+      "category": "workflow"
     }
   ]
 }
