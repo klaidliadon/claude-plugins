@@ -1,6 +1,6 @@
 ---
 name: go-style
-description: Go style conventions to apply when writing, refactoring, or reviewing Go code in any of the user's repos — type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, pointer-field initialization, import aliasing, logger naming, test shape, assertion collapsing, parser colocation. The canonical cross-repo Go home — the global CLAUDE.md no longer carries a dedicated Go section. Load BEFORE writing Go; also use when reviewing Go diffs.
+description: Go style conventions to apply when writing, refactoring, or reviewing Go code in any of the user's repos — type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, config-at-startup validation, HTTP-client injection, struct-literal and pointer-field initialization, import aliasing, logger naming, test shape, assertion collapsing, parser colocation. The canonical cross-repo Go home — the global CLAUDE.md no longer carries a dedicated Go section. Load BEFORE writing Go; also use when reviewing Go diffs.
 ---
 
 # Go style conventions
@@ -42,10 +42,16 @@ Preserve named return arguments — they document what each value means at the s
 
 Never plain SHA-256 without salt. Reuse the existing salt+pepper patterns (e.g. API-key hashing) before inventing new ones.
 
+## Construction & clients
+
+- Validate config at startup via `Parse()` methods — not at request time.
+- Never use `http.DefaultClient` — inject an HTTP client with an explicit timeout.
+
 ## Small mechanics
 
 - `cmp.Or(val, fallback)` over `if val == zero { val = fallback }` for simple defaults.
 - Extract repeated header/request setup into a helper — don't copy-paste across methods.
+- Inline single-field struct literals: `&Foo{Bar: val}`.
 
 ## Time-sensitive tests
 
