@@ -37,7 +37,7 @@
     },
     {
       "name": "go-style",
-      "description": "Go style conventions: type design and composition, naming, error wrapping, new(value) for *T fields, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
+      "description": "Go style conventions: type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, new(value) for *T fields, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
       "source": "./plugins/go-style",
       "category": "development"
     },

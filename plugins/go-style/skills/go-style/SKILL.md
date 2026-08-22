@@ -1,11 +1,11 @@
 ---
 name: go-style
-description: Go style conventions to apply when writing, refactoring, or reviewing Go code in any of the user's repos — type design and composition, naming, error wrapping, pointer-field initialization, import aliasing, logger naming, test shape, assertion collapsing, parser colocation. Load BEFORE writing Go; also use when reviewing Go diffs.
+description: Go style conventions to apply when writing, refactoring, or reviewing Go code in any of the user's repos — type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, pointer-field initialization, import aliasing, logger naming, test shape, assertion collapsing, parser colocation. The canonical cross-repo Go home — the global CLAUDE.md no longer carries a dedicated Go section. Load BEFORE writing Go; also use when reviewing Go diffs.
 ---
 
 # Go style conventions
 
-Uber Go style guide as baseline. These are cross-project conventions confirmed by explicit feedback; they complement (never override) the global CLAUDE.md Go rules and any repo-local CLAUDE.md.
+Uber Go style guide as baseline. These are the cross-project Go conventions confirmed by explicit feedback — the canonical home; the global CLAUDE.md no longer carries a `# Go` section. A repo-local CLAUDE.md still wins where it applies.
 
 ## Type design
 
@@ -26,10 +26,21 @@ Anti-patterns: fat interfaces (compose small ones instead); interface-everything
 - `New*` constructors, `Parse*` from raw data, PascalCase with uppercase acronyms (`APIKeyTable`).
 - Packages: short, lowercase, no underscores. Unexported helpers named by action: `deriveName`, `buildRequest`.
 - Names describe behavior, not aspiration: `tokenSource`, not `VendorAuth`.
+- Drop the package prefix from exported names — `s2s.Verify`, not `s2s.VerifyS2S`. The import path already qualifies it at the call site.
+
+## Named returns
+
+Preserve named return arguments — they document what each value means at the signature, especially in multi-value returns (`(n int, err error)`). Don't strip existing ones to bare types.
 
 ## Errors
 
-Wrap with `fmt.Errorf("context: %w", err)` — lowercase, colon-separated.
+- Wrap with `fmt.Errorf("context: %w", err)` — lowercase, colon-separated.
+- Never surface raw DB errors — translate to domain errors by semantic context (`pgx.ErrNoRows` → `ErrUserNotFound`, never a leaked driver string).
+- `//nolint:errcheck` for intentionally unchecked errors — never `_ =`.
+
+## Hashing & secrets
+
+Never plain SHA-256 without salt. Reuse the existing salt+pepper patterns (e.g. API-key hashing) before inventing new ones.
 
 ## Small mechanics
 
