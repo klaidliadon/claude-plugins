@@ -1,0 +1,8 @@
+{
+  "name": "land-pr",
+  "version": "0.1.0",
+  "description": "Drive an open GitHub PR until it is actually merged: rebase, green CI, address human and bot reviews, poll, merge.",
+  "author": {
+    "name": "klaidliadon"
+  }
+}

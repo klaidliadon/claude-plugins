@@ -36,6 +36,12 @@
       "category": "git"
     },
     {
+      "name": "land-pr",
+      "description": "Drive an open GitHub PR until it is actually merged: rebase, green CI, address human and bot reviews, poll, merge.",
+      "source": "./plugins/land-pr",
+      "category": "git"
+    },
+    {
       "name": "go-style",
       "description": "Go style conventions: type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, config-at-startup validation, HTTP-client injection, new(value)/struct-literal init, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
       "source": "./plugins/go-style",
