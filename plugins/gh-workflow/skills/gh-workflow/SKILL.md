@@ -5,14 +5,14 @@ description: Use when authoring a GitHub pull request or issue body, composing a
 
 # gh-workflow
 
-How to author GitHub PRs and issues, and take a PR through review: the shared body-composition rules, the PR-description and issue-body formats, the gated review pipeline, chained/dependent-PR rules, and the code-review output convention. This is the canonical home for the body-composition rules — branch/commit/destructive-git invariants live in CLAUDE.md and are not repeated here.
+How to author GitHub PRs and issues, and take a PR through review: the shared body-composition rules, the PR-description and issue-body formats, the gated review pipeline, chained/dependent-PR rules, and the code-review output convention. This is the canonical home for body structure, format, and mechanics. Prose quality lives in `writing-for-humans` and is not restated here; branch/commit/destructive-git invariants live in CLAUDE.md.
 
 ## Body composition (PRs and issues)
 
 PR descriptions and issue bodies share the same composition rules. Write both for an interrupted reader.
 
 - **First screen carries the point.** The change/ask and its impact are clear without scrolling. A waiting action, decision, or blocker is the first visible line — name who must act or what must happen. Nothing waiting → no status boilerplate.
-- **Plain English, bullets over prose.** ~15-word sentences, one idea each. Three-plus items → a bullet list. No dense noun stacks, no LLM preamble/recap/pleasantries.
+- **Prose quality is not defined here.** Apply the `writing-for-humans` skill to every part of a body: readability, voice, and the author's written register. This skill owns structure, format, and mechanics only.
 - **No hard-wrapping.** GFM renders a single newline inside a paragraph as a hard `<br>`, so prose wrapped at ~80 cols displays broken mid-sentence. One physical line per paragraph; blank lines separate paragraphs. List items and table rows stay one per line; an intentional multi-line stack is fine — the break is the point there.
 - **Bodies via `--body-file` / `-F body=@…`, never heredoc** — heredoc mangles backticks, fences, `!`, `"`. Don't escape backticks. Assemble the file with the Write tool (append boilerplate via `cp` + `printf >>` if needed) — never `printf … "$(cat draft.md)"`: command substitution always escalates the Bash call to a manual permission prompt, no matter how allowlisted the inner commands are.
 - **Sourced claims.** A technical assertion (spec behavior, vendor API, RFC) links its authoritative source inline, or says "corroborated, not primary-verified" when the source can't be machine-read.
