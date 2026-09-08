@@ -1,7 +1,7 @@
 {
   "name": "writing-for-humans",
-  "version": "0.1.0",
-  "description": "The house standard for writing prose a human reader can genuinely follow: concise means simplify not compress, discursive sentences over telegraphic fragments, show-don't-name with worked examples, and choosing prose/list/table/diagram by the shape of the information. Apply to any human-facing writing — proposals, PRs, docs, issues, messages.",
+  "version": "0.2.0",
+  "description": "The house standard for writing that a human can follow and that reads like a person wrote it. Two axes: readability (concise means simplify not compress, discursive sentences over telegraphic fragments, show-don't-name with worked examples, format by the shape of the information) and voice (the eight tells that mark text as machine-written, plus the author's own measured written register). Apply to any human-facing writing: proposals, PRs, docs, issues, messages.",
   "author": {
     "name": "klaidliadon"
   }
