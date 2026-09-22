@@ -1,6 +1,6 @@
 ---
 name: design-proposal
-description: Use when writing, drafting, or revising an engineering design proposal, technical design doc, RFC, architecture proposal, or decision proposal. Covers the decision-ready argument, source-authority discipline (facts vs recommendations), the layered design + plan/spec structure for larger proposals, alternatives, and folding review feedback into the canonical proposal. Delegates prose quality to writing-for-humans.
+description: Use when writing, drafting, or revising an engineering design proposal, technical design doc, RFC, architecture proposal, or decision proposal, and when deciding where a design's rationale should live once the decision is made. Covers the decision-ready argument, source-authority discipline (facts vs recommendations), the layered design + plan/spec structure for larger proposals, the design and rationale split after a proposal lands, alternatives, and folding review feedback into the canonical proposal. Delegates prose quality to writing-for-humans.
 ---
 
 # Design Proposal
@@ -33,6 +33,8 @@ Read `references/proposal-standard.md` before drafting or revising. It carries t
 ## The layered structure (large proposals)
 
 A small proposal is one document. A large one — a system that lands in several stages — is better as a few files: one human **design doc** (the argument), plus a `plan.md` (execution steps with verify checks) and a `spec.md` (the precise contract) per layer. The design doc optimizes for understanding; the spec optimizes for unambiguous execution. See the reference for detail.
+
+Once the decision is made and the proposal lands in a repo, split it again: `design.md` states what the system does, and the argument moves to a `rationale.md` beside it, one entry per decision, linked from the design's footer. The reference section "After the decision" carries the entry format.
 
 ## Completion checks
 
