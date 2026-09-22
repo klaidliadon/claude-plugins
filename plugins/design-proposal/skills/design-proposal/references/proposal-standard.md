@@ -60,6 +60,26 @@ The design doc optimizes for understanding. The spec optimizes for unambiguous e
 
 Keep each layer independently reviewable. A reader should be able to approve the shape of the work from the design doc without reading a single spec.
 
+### After the decision
+
+A proposal argues for a decision. A design doc living in the repo describes the system that decision produced, and its readers are people who already accepted it and now need to know how the thing works. Those are different artifacts with the same filename, and the second one is read far more often.
+
+So when the proposal lands, split it. `design.md` states what the system does, in the present tense: the problem in two or three sentences, the solution as statements, the mechanics a reader needs, then limits and open questions. The argument moves to `rationale.md` beside it, linked from the design's footer.
+
+Nothing is thrown away. Rejected alternatives, the evidence behind the choice, and the history of what was tried before are the most expensive things in the document to reconstruct later, and they are also what a reader who just wants to know how the system behaves has to wade through. One entry per decision:
+
+```markdown
+## <the decision, as a heading>
+
+**Decision.** One line.
+**Alternative.** What else was on the table, and who raised it.
+**Evidence.** The numbers or the history, and how they were measured.
+```
+
+Entries are append-only. A reversal edits its entry and dates it, so a later reader can tell a decision was revisited rather than forgotten. A design that rejected no alternative needs no rationale file.
+
+Keep the change-scoped argument out of both. Why this pull request, now, belongs in its body. Why the system is shaped this way belongs in the repo. A review thread copied into either ages badly and nobody updates it.
+
 ## 4. Detail and decision-relevance
 
 - Put the recommendation and the requested decision first, and keep it short.
