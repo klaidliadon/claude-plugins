@@ -1,6 +1,6 @@
 ---
 name: design-proposal
-description: Use when writing, drafting, or revising an engineering design proposal, technical design doc, RFC, architecture proposal, or decision proposal, and when deciding where a design's rationale should live once the decision is made. Covers the decision-ready argument, source-authority discipline (facts vs recommendations), the layered design + plan/spec structure for larger proposals, the design and rationale split after a proposal lands, alternatives, and folding review feedback into the canonical proposal. Delegates prose quality to writing-for-humans.
+description: Use when writing, drafting, or revising an engineering design proposal, technical design doc, RFC, architecture proposal, or decision proposal, when deciding whether a change needs a design doc at all, and when deciding where a design's rationale should live once the decision is made. Covers the decision-ready argument, source-authority discipline (facts vs recommendations), the layered design + plan/spec structure for larger proposals, the design and rationale split after a proposal lands, alternatives, and folding review feedback into the canonical proposal. Delegates prose quality to writing-for-humans.
 ---
 
 # Design Proposal
@@ -23,7 +23,7 @@ Read `references/proposal-standard.md` before drafting or revising. It carries t
 ## Build the proposal
 
 1. Name the exact decision, who decides it, the concrete problem, the explicit requirements and constraints, and any approval gates.
-2. Challenge whether a proposal is even the right artifact. If no decision is waiting, stop.
+2. Challenge whether a proposal is even the right artifact. If no decision is waiting, stop. If one is, the six questions in the reference size it: with all noes the argument fits in the ticket or PR body, and any yes earns a standalone document.
 3. As you work, classify each input as a **supplied fact**, a **verified fact**, an **assumption**, or a **recommendation**. Facts describe today; recommendations describe tomorrow. Never fill a gap with plausible-sounding detail.
 4. Draft one recommendation with explicit boundaries, constraints, and non-goals.
 5. Include the credible alternatives and say why the recommendation wins.
@@ -38,7 +38,9 @@ Once the decision is made and the proposal lands in a repo, split it again: `des
 
 ## Completion checks
 
-- A reader can state the requested decision and who must make it.
+- A reader can state the requested decision and who must make it, with no outside context.
+- Every goal is an outcome for users, the team, or the company, never a mechanism.
+- Every operational section present (reliability, data, security, logging, legal) changes the decision; for a production system, having none is a deliberate call, not an omission.
 - Every current-state claim is a supplied or verified fact; assumptions and recommendations are visibly distinct.
 - Every explicit requirement, schedule fact, and approval gate keeps its meaning.
 - One design is recommended, and each alternative has a rejection reason.

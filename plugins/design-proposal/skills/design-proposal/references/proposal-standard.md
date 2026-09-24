@@ -20,6 +20,19 @@ Lead with the recommendation, before any history, mechanism, or evidence. A read
 
 If no decision is waiting, a proposal is the wrong artifact. Stop and write whatever the situation actually needs — a doc, a ticket, a note.
 
+When a decision is waiting, weigh whether it earns a standalone document. Six questions decide it (adapted from [Michael Lynch's design-doc guide](https://refactoringenglish.com/excerpts/write-an-effective-design-doc/), which this section and section 4 draw on):
+
+- Will multiple people coordinate work to implement the design?
+- Will it take more than three months of full-time work?
+- Will the result be hard to change once it is running in production?
+- Does it cross team boundaries?
+- Are the goals or requirements ambiguous?
+- Is there a catastrophic risk, such as a security or legal flaw, that design-time review could prevent?
+
+One yes means a standalone proposal is likely worth writing, and two or more mean it almost certainly is. All noes mean the argument fits in the ticket or the pull request body. The container shrinks; the contract does not: one recommendation, its alternatives, and the authority discipline apply at every size.
+
+Where the proposal names goals, state each as an outcome for users, the team, or the company, never as a mechanism. "Minimize outages related to deploying new app versions" is a goal. "Add Kubernetes to our infrastructure" is a design choice wearing a goal's clothes, and putting it in the goal slot smuggles the decision past the argument.
+
 ## 2. Authority discipline
 
 This is the discipline that keeps a proposal honest. Classify every input while you work. Do not publish the classification itself.
@@ -86,7 +99,21 @@ Keep the change-scoped argument out of both. Why this pull request, now, belongs
 - Include implementation detail only where it changes feasibility, risk, cost, or ownership. Move exhaustive inventories and matrices after the narrative.
 - Omit any section with no decision value. Do not add empty headings or ceremonial content.
 
+The test for whether a decision belongs in the proposal is the penalty for being wrong. Choosing the language for a system that will grow to two hundred thousand lines is close to irreversible. Picking a page size for pagination is an afternoon's change, and it does not belong there. The same test ranks dependencies: sweat the storage backend, not the third-party email service you could swap in a day.
+
+When the design is a system that people or other services interact with, ground it in one scenario: a short step-by-step walkthrough of the system in real use. A scenario is show-don't-name at the design level, and it exposes the gaps that a component list hides.
+
 High risk does not call for more prose; it calls for sharper boundaries and explicit gates.
+
+### Operational prompts
+
+For a system that will run in production, walk these prompts while drafting. Write a section only where an answer changes the decision; an unremarkable answer stays out of the doc.
+
+- **Reliability.** What are the objective targets for availability, latency, and scale? If the service goes down, how do you find out? If it gets 100x slower, how do you know?
+- **Data.** What sensitive data does it handle, how long is it kept, who can read it, and how is it protected in transit and at rest?
+- **Security.** What threats were considered, what is the attack surface, and where are the trust boundaries?
+- **Logging.** Which events are recorded, where do they go, how long are they retained, and what must never be logged?
+- **Legal.** Which regulatory, contractual, or licensing constraints apply to the design?
 
 ## 5. Review reconciliation
 
@@ -101,11 +128,11 @@ The final proposal is the current decision surface. It is not a meeting transcri
 
 ## 6. Review rubric
 
-**Decision.** Can a reader repeat the requested decision and name who decides it? Does the proposal recommend one design? Does each alternative have a rejection reason?
+**Decision.** Can a reader repeat the requested decision and name who decides it? Does the proposal recommend one design? Does each alternative have a rejection reason? Could a reader who never spoke to the author understand the problem from the opening alone? Is every goal an outcome rather than a mechanism?
 
 **Authority.** Is every current-state claim supplied or verified? Are assumptions labeled? Are recommendations written as proposed behavior? Does every explicit requirement, schedule fact, and approval gate keep its meaning?
 
-**Scope.** Are actors, systems, ownership, and non-goals explicit? Is implementation detail limited to what affects the decision? Are the relevant Security, Legal, privacy, data, or operational gates named?
+**Scope.** Are actors, systems, ownership, and non-goals explicit? Is implementation detail limited to what affects the decision? Are the relevant Security, Legal, privacy, data, or operational gates named, and does every operational section present change the decision?
 
 **Prose.** Run the `writing-for-humans` checklist: every sentence lands on the first read, tables are real grids, diagrams earn their place, and rules about selection or calculation are shown with a worked example.
 
@@ -117,6 +144,7 @@ The final proposal is the current decision surface. It is not a meeting transcri
 | --- | --- |
 | Plausible details treated as facts | Label them assumptions or verify them |
 | Several options given equal weight | Recommend one and say why |
+| A design choice stated as a goal | Rewrite the goal as the user, team, or company outcome; the mechanism moves to the design |
 | The proposal becomes an implementation plan | Keep only the mechanics that affect the decision |
 | Review history left inline | Reconcile it into the current design or open decisions |
 | A risk section that lists generic risks | Include only risks that change approval, design, or rollout |
