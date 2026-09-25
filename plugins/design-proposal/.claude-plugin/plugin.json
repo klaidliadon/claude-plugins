@@ -1,7 +1,7 @@
 {
   "name": "design-proposal",
-  "version": "0.4.0",
-  "description": "Structure a decision-ready engineering design proposal: recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure for larger proposals, alternatives, and review reconciliation. Delegates prose quality to writing-for-humans.",
+  "version": "0.4.1",
+  "description": "Structure a decision-ready engineering design proposal: a worth-it gate that sizes the artifact (ticket or PR body vs standalone doc), recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure for larger proposals, alternatives, review reconciliation, and the design and rationale split once a proposal lands. Delegates prose quality to writing-for-humans.",
   "author": {
     "name": "klaidliadon"
   }
