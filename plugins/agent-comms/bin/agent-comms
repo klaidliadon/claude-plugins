@@ -12,7 +12,7 @@ usage() {
   cat >&2 <<'EOF'
 agent-comms — 2-party agent review-loop transport
 usage:
-  agent-comms init       --channel C --session S --driver D --peer P --release V --digest H --protocol 2 --release-root R [--semantic-timeout 1..3600]
+  agent-comms init       --channel C --session S --driver D --peer P [--release V --digest H --protocol 2 --release-root R] [--semantic-timeout 1..3600]
   agent-comms send       --channel C --from F --generation N [--continue] [--tag TAG] [--body-file F] [--review-ref|--approve-ref|--converged-ref FILE]
                                                              (body on stdin unless --body-file; a --*-ref hashes FILE and sets the wire tag)
   agent-comms recv       --channel C --me M [--timeout N]    (blocks; prints peer msg or interruption sentinel)
@@ -20,7 +20,7 @@ usage:
   agent-comms resume     --channel C --from F --generation N --replace ROLE --body-file F [--artifact-file F]
                                                              (replace the interrupted peer and emit its bounded resume packet)
   agent-comms launch     <claude|codex> --role <driver|reviewer> --peer NAME --channel C
-                         --generation N --prompt-file F --client-release V [runtime args after --]
+                         --generation N --prompt-file F --client-release V --root R [runtime args after --]
   agent-comms transcript --channel C                         (clean chat view)
   agent-comms path       --channel C                         (resolved channel file path)
   agent-comms hash       <file>                              (sha256 of file, for review/approve refs)
