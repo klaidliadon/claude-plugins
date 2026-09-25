@@ -13,13 +13,13 @@
     },
     {
       "name": "ridl-lsp",
-      "description": "RIDL language server for .ridl schema files.",
+      "description": "RIDL language server for .ridl schema files",
       "source": "./plugins/ridl-lsp",
       "category": "development"
     },
     {
       "name": "agent-comms",
-      "description": "Two agent sessions (e.g. Claude author + Codex reviewer) autonomously iterate on an artifact through a shared file until they converge or hit an impasse.",
+      "description": "Two agent sessions (e.g. Claude as author, Codex as reviewer) autonomously iterate on an artifact through a single shared file until they converge or hit an impasse, with no human relaying between chats.",
       "source": "./plugins/agent-comms",
       "category": "workflow"
     },
@@ -43,31 +43,31 @@
     },
     {
       "name": "go-style",
-      "description": "Go style conventions: type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, config-at-startup validation, HTTP-client injection, new(value)/struct-literal init, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
+      "description": "Go style conventions: type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, config-at-startup validation, HTTP-client injection, cmp.Or defaults, struct-literal and pointer-field initialization, time-sensitive tests with testing/synctest, multi-column scan structs, import aliasing, logger naming, test shape, assertion collapsing, parser colocation, Go diff review checklist.",
       "source": "./plugins/go-style",
       "category": "development"
     },
     {
       "name": "service-skeleton",
-      "description": "Go backend service layout: cmd/rpc/data/clients/tests structure, patterns, and anti-patterns.",
+      "description": "Go backend service layout: apps/<svc>/ cmd, config, data, domain, rpc, tests plus a root pkg/, patterns, and anti-patterns.",
       "source": "./plugins/service-skeleton",
       "category": "development"
     },
     {
       "name": "gh-stack",
-      "description": "GitHub-native stacked pull requests via the gh-stack CLI extension — create, sync, navigate, and atomically merge PR stacks.",
+      "description": "GitHub-native stacked pull requests via the gh-stack CLI extension: create, sync, navigate, and atomically merge PR stacks.",
       "source": "./plugins/gh-stack",
       "category": "git"
     },
     {
       "name": "writing-for-humans",
-      "description": "The house standard for writing prose a human reader can genuinely follow: concise means simplify not compress, discursive sentences, show-don't-name with worked examples, and choosing prose/list/table/diagram by the shape of the information. Apply to any human-facing writing.",
+      "description": "The house standard for writing that a human can follow and that reads like a person wrote it. Two axes: readability (concise means simplify not compress, discursive sentences over telegraphic fragments, show-don't-name with worked examples, format by the shape of the information) and voice (the eight tells that mark text as machine-written, plus the author's own measured written register). Apply to any human-facing writing: proposals, PRs, docs, issues, messages.",
       "source": "./plugins/writing-for-humans",
       "category": "workflow"
     },
     {
       "name": "design-proposal",
-      "description": "Structure a decision-ready engineering design proposal: recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure, alternatives, and review reconciliation. Delegates prose quality to writing-for-humans.",
+      "description": "Structure a decision-ready engineering design proposal: a worth-it gate that sizes the artifact (ticket or PR body vs standalone doc), recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure for larger proposals, alternatives, review reconciliation, and the design and rationale split once a proposal lands. Delegates prose quality to writing-for-humans.",
       "source": "./plugins/design-proposal",
       "category": "workflow"
     }

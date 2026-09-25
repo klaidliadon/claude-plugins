@@ -4,10 +4,17 @@ Personal Claude Code plugin marketplace.
 
 ## Plugins
 
-- **git-cleanup** — Audit local branches and worktrees against GitHub PR state, auto-clean unambiguously safe branches, prompt on the rest. Conservative, stack-aware via sdf, with `--all` sweep across `~/Workspace` and `--dry-run`. Slash command: `/git-cleanup`.
-- **ridl-lsp** — RIDL language server for `.ridl` schema files.
-- **gh-stack** — GitHub-native stacked pull requests via the `gh-stack` CLI extension: create, sync, navigate, and atomically merge PR stacks. Supersedes sdf on repos where the public preview is enabled.
-- **land-pr** — Drive an open GitHub PR until it is actually merged: rebase, green CI, address human and bot reviews, poll, merge. Slash command: `/land-pr`.
+- **agent-comms**: two agent sessions (e.g. Claude as author, Codex as reviewer) iterate on an artifact through a shared file until they converge or hit an impasse.
+- **codex-review**: run a Codex code review against a GitHub PR, specific files, or the local working tree.
+- **design-proposal**: structure a decision-ready engineering design proposal.
+- **gh-stack**: GitHub-native stacked pull requests via the `gh-stack` CLI extension: create, sync, navigate, and atomically merge PR stacks.
+- **gh-workflow**: authoring GitHub PRs and issues, the gated review pipeline, chained-PR merge order, and code-review output.
+- **git-cleanup**: audit local branches and worktrees against GitHub PR state, auto-clean safe ones, prompt on the rest, with `--all` sweep across `~/Workspace` and `--dry-run`. Slash command: `/git-cleanup`.
+- **go-style**: Go style conventions.
+- **land-pr**: drive an open GitHub PR until it is actually merged: rebase, green CI, address human and bot reviews, poll, merge. Slash command: `/land-pr`.
+- **ridl-lsp**: RIDL language server for `.ridl` schema files.
+- **service-skeleton**: Go backend service layout and where new code belongs.
+- **writing-for-humans**: the house standard for human-facing prose, on two axes: readability and voice.
 
 ## Install
 
