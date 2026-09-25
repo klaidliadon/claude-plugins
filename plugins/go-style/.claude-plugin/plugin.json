@@ -1,7 +1,7 @@
 {
   "name": "go-style",
-  "version": "1.4.0",
-  "description": "Go style conventions: type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, config-at-startup validation, HTTP-client injection, new(value)/struct-literal init, import aliasing rules, logger naming, test shape, assertion collapsing, parser colocation.",
+  "version": "1.4.1",
+  "description": "Go style conventions: type design and composition, naming and package-prefix stripping, named returns, error wrapping and translation, unchecked-error marking, hashing/secrets, config-at-startup validation, HTTP-client injection, cmp.Or defaults, struct-literal and pointer-field initialization, time-sensitive tests with testing/synctest, multi-column scan structs, import aliasing, logger naming, test shape, assertion collapsing, parser colocation, Go diff review checklist.",
   "author": {
     "name": "klaidliadon"
   }
