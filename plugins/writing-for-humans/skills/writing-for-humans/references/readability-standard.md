@@ -1,6 +1,6 @@
 # The Readability Standard
 
-The house standard for prose a human reader can genuinely follow. This is the depth behind the principles in `SKILL.md`: the before/after examples, the format rules, and the review checklist.
+The house standard for prose a human reader can genuinely follow. This is the depth behind the principles in `SKILL.md`: the before/after examples and the format rules. The review checklist lives in `SKILL.md` under "Quick check".
 
 The core idea: **an LLM optimizes for meaning per word; a human reads with limited working memory per sentence.** Meaning-per-word is the wrong target. Text where every word is load-bearing forces the reader to decompress each sentence and re-read. Everything here exists to prevent that.
 
@@ -53,7 +53,7 @@ For a rule with running state, show the state stepping. **Before:**
 >
 > The running total is month-to-date. A config change mid-month does not reset it to zero, so the customer keeps the bracket their volume has earned.
 
-Drawing the table also *exposes the gap*: the moment you write the brackets out, the obvious question appears - what if the config change also changes the brackets? Dense prose hides that question; the worked version forces it. This is why clear writing and good review are the same muscle.
+Drawing the table also *exposes the gap*: the moment you write the brackets out, the obvious question appears - what if the config change also changes the brackets? Dense prose hides that question; the worked version forces it. This is why clear writing and good review are the same muscle. If you cannot write a rule out clearly, you do not yet understand it.
 
 ## 4. Pick the format by shape
 
@@ -63,7 +63,7 @@ Default to prose. Escalate only when the shape of the information needs it, and 
 | --- | --- | --- |
 | Prose | Reasoning, cause and effect, walking through a mechanism | You are stacking colon-fragments instead of writing verbs |
 | List | 3-5 peer items (a set), or ordered steps | A bullet needs a clause tying it to the previous one (that is prose); one bullet is a paragraph |
-| Table | 2+ items compared across the *same* columns; lookup or comparison | A two-column key→value with one value per row (that is a list); columns do not apply to every row; you are arguing inside it |
+| Table | 2+ items compared across the *same* columns; lookup or comparison | A two-column key-value with one value per row (that is a list); columns do not apply to every row; you are arguing inside it |
 | Diagram (mermaid) | A topology or flow you would otherwise describe with arrows in prose | It is short and linear (a numbered list reads faster); the diagram takes longer to parse than a sentence |
 
 Rules that hold across a whole document:
@@ -100,12 +100,7 @@ Length should serve clarity. Text is too long when it carries ideas that do not 
 
 ## 6. Review checklist
 
-- Does every sentence land on the first read?
-- Any telegraphic fragments, stacked parentheticals, or terms used before they are introduced?
-- Is every table a real grid (same columns for every row), and is there at most one per section?
-- Does every diagram earn its place, and is the reasoning carried by prose?
-- Is any rule about selection, structure, or calculation shown with a worked example, not only named?
-- Is the only thing cut filler - never clarity?
+See "Quick check" in `SKILL.md`, the single checklist for both axes.
 
 ## 7. Common failures
 
