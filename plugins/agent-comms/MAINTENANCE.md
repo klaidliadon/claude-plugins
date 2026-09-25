@@ -164,7 +164,7 @@ Every changed bundle gets a new version. Never reuse an installed version.
 5. On a clean branch, run `agent-comms release check`, then
    `agent-comms release publish`.
 
-For v2.0.5 the immutable tag is `agent-comms--v2.0.5`. `publish` rechecks the
+For v2.0.6 the immutable tag is `agent-comms--v2.0.6`. `publish` rechecks the
 bundle, creates and pushes that unmoving tag, refreshes the marketplace,
 performs the normal update transaction, and runs post-activation `doctor`.
 Rollback moves only `current`; a bad published tag is never moved or reused.

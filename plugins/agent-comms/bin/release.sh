@@ -505,8 +505,8 @@ check_update() {
 release_consistency() {
   local root="$1" version skill_release launcher_release manifest_release
   version="$(plugin_version "$root")"
-  skill_release="$(sed -n 's/.*--client-release \([0-9][0-9.]*\).*/\1/p' \
-    "$root/skills/agent-comms/SKILL.md" | sort -u)"
+  skill_release="$(grep -o -e '--client-release [0-9][0-9.]*' \
+    "$root/skills/agent-comms/SKILL.md" | sed 's/^--client-release //' | sort -u)"
   launcher_release="$(sed -n 's/^CLIENT_RELEASE="\([^"]*\)"/\1/p' "$root/bin/launch.sh")"
   manifest_release="$(sed -n 's/^release //p' "$root/manifest.lock")"
   [ "$version" = "$skill_release" ] ||

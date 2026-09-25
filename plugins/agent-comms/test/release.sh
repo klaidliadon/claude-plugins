@@ -304,11 +304,11 @@ test_v2_release_contract_is_consistent() {
   launcher="$(cat "$DIR/bin/launch.sh")"
   cli="$(cat "$DIR/bin/agent-comms")"
   library="$(cat "$DIR/bin/lib.sh")"
-  assert_contains "$plugin" '"version": "2.0.5"'
-  assert_contains "$manifest" 'release 2.0.5'
-  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.5"'
-  assert_contains "$skill" '--client-release 2.0.5'
-  assert_contains "$maintenance" 'agent-comms--v2.0.5'
+  assert_contains "$plugin" '"version": "2.0.6"'
+  assert_contains "$manifest" 'release 2.0.6'
+  assert_contains "$launcher" 'CLIENT_RELEASE="2.0.6"'
+  assert_contains "$skill" '--client-release 2.0.6'
+  assert_contains "$maintenance" 'agent-comms--v2.0.6'
   assert_not_contains "$skill" 'claude-review'
   assert_not_contains "$(sed '1,/^description:/d' "$DIR/skills/agent-comms/SKILL.md")" 'codex-review'
   assert_not_contains "$skill" 'install-codex'
@@ -325,8 +325,19 @@ test_release_check_rejects_any_drifted_skill_literal() {
   local output
   perl -0pi -e 's/(.*)--client-release [0-9.]+/$1--client-release 9.9.9/s' \
     "$SOURCE/skills/agent-comms/SKILL.md"
-  assert_contains "$(head -20 "$SOURCE/skills/agent-comms/SKILL.md")" '--client-release 2.0.5'
+  assert_contains "$(head -20 "$SOURCE/skills/agent-comms/SKILL.md")" '--client-release 2.0.6'
   assert_contains "$(tail -20 "$SOURCE/skills/agent-comms/SKILL.md")" '--client-release 9.9.9'
+  bash "$RELEASE" manifest --root "$SOURCE"
+  output="$(bash "$SOURCE/bin/release.sh" check 2>&1)"
+  assert_eq "$?" "1"
+  assert_contains "$output" 'skill release mismatch'
+  rm -rf "$FIXTURE"
+}
+
+test_release_check_rejects_same_line_drifted_skill_literal() {
+  new_release_fixture
+  local output
+  printf '\nPin `--client-release 9.9.9`, never `--client-release 2.0.6`.\n' >>"$SOURCE/skills/agent-comms/SKILL.md"
   bash "$RELEASE" manifest --root "$SOURCE"
   output="$(bash "$SOURCE/bin/release.sh" check 2>&1)"
   assert_eq "$?" "1"
@@ -349,6 +360,7 @@ else
   test_dispatch_ignores_cache_base_override
   test_v2_release_contract_is_consistent
   test_release_check_rejects_any_drifted_skill_literal
+  test_release_check_rejects_same_line_drifted_skill_literal
 fi
 
 finish_tests "RELEASE"

@@ -7,7 +7,7 @@ description: Use when Claude and Codex must autonomously exchange progressive wo
 
 Use one append-only, human-readable channel. `tail -f "$(agent-comms path …)"` shows the whole exchange; hidden v2 headers, not visible separators or the word `over`, are authoritative.
 
-Release literal: `--client-release 2.0.5`. Never derive or change it at runtime.
+Release literal: `--client-release 2.0.6`. Never derive or change it at runtime.
 
 ## Start a review
 
@@ -24,7 +24,7 @@ Pick the reviewed repository's absolute root `R` and one absolute `--dir D` writ
    ```text
    agent-comms launch <claude|codex> --role reviewer --peer <me> \
      --channel C --generation 1 --prompt-file P \
-     --client-release 2.0.5 --root R --dir D
+     --client-release 2.0.6 --root R --dir D
    ```
 
 3. Require `launcher-ready` before spending a model turn. This proves the transport and runtime adapter are ready; it is not a model-generated ACK:
@@ -52,7 +52,7 @@ When taking the floor, complete the launcher's transport handshake before readin
 
 The session defaults `semantic_timeout` to 300 seconds and permits at most 3600. The default is the maximum gap between evidence-bearing updates, not a total task-duration limit. Pass a larger `agent-comms init --semantic-timeout N` only for a workload whose meaningful progress cannot be split; do not silently raise it for ordinary reviews. While an agent holds the floor, only one of its current-generation message frames resets that clock; status, heartbeat, and activity ticks do not. When the waiting side's `recv` returns `__TURN_TIMEOUT__` or `__PEER_EXIT__`, resume the peer as described below.
 
-Every `recv` call must use a Bash tool `timeout: 600000` (600 seconds), because the default 540-second silence window outlasts the host's 120-second Bash default. Launched Claude peers already get that default; a human-started driver does not. Call `recv` synchronously again after a silence timeout; never leave it running in the background. Do not launch Claude with `--safe-mode`, `--bare`, or `CLAUDE_CODE_SAFE_MODE=1`; launch rejects modes that remove the protocol instruction substrate.
+The default 540-second `recv` silence window outlasts Claude Code's 120-second Bash default. In Claude, call every `recv` with the Bash tool `timeout: 600000`; launched Claude peers already get that default, a human-started driver does not. In Codex, run `recv` as a foreground command and keep polling that exec session until it returns. Call `recv` synchronously again after a silence timeout; never leave it running in the background. Do not launch Claude with `--safe-mode`, `--bare`, or `CLAUDE_CODE_SAFE_MODE=1`; launch rejects modes that remove the protocol instruction substrate.
 
 Maintain findings as `F1…`, severity `Critical|Important|Suggestion`, and status `open|resolved|contested`. Only unresolved Critical/Important findings block approval.
 
@@ -69,7 +69,7 @@ agent-comms resume --channel C --from <driver> --generation <driver-gen> \
   --replace <peer> --body-file HANDOFF [--artifact-file ARTIFACT] --dir D
 ```
 
-Launch the peer again with its incremented generation, `--root R`, and the same pinned `--client-release 2.0.5`. Pass the current artifact when one exists. The launcher verifies its hash and injects the original task body, task checksum, handoff, and artifact checksum; never replay the full transcript or fall forward to `current`. Late old-generation frames remain visible but are excluded from delivery. Replacement keeps the open turn number but starts fresh receive and semantic-progress deadlines.
+Launch the peer again with its incremented generation, `--root R`, and the same pinned `--client-release 2.0.6`. Pass the current artifact when one exists. The launcher verifies its hash and injects the original task body, task checksum, handoff, and artifact checksum; never replay the full transcript or fall forward to `current`. Late old-generation frames remain visible but are excluded from delivery. Replacement keeps the open turn number but starts fresh receive and semantic-progress deadlines.
 
 ## Finish
 
