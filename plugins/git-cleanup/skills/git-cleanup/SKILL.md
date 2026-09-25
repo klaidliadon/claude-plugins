@@ -20,38 +20,17 @@ Conservative posture only. There is no `--aggressive` flag.
 
 ## Helper scripts
 
-Two read-only Node helpers ship in `scripts/` next to this file. Use them instead of
-hand-writing per-run classification — they do the whole truth table in one call with
-no permission prompts, because the plugin lives under `~/.claude/plugins/` and the
-`node <plugins-path>/*` invocation is allowlisted. Both are **read-only** (no deletes,
-no ref writes, no fetch) so the destructive-git guardrail keeps gating actual removals.
+Two read-only Node helpers ship in `scripts/` next to this file. Use them instead of hand-writing per-run classification: they do the whole truth table in one call with no permission prompts, because the plugin lives under `~/.claude/plugins/` and the `node <plugins-path>/*` invocation is allowlisted. Both are **read-only** (no deletes, no ref writes, no fetch) so the destructive-git guardrail keeps gating actual removals.
 
-Invoke by absolute path to this skill's `scripts/` dir (call it `SKILL_SCRIPTS`), e.g.
-`node "$SKILL_SCRIPTS/audit.mjs" …` where `$SKILL_SCRIPTS` is the directory containing
-this SKILL.md plus `/scripts`.
+Invoke by absolute path to this skill's `scripts/` dir (call it `SKILL_SCRIPTS`), e.g. `node "$SKILL_SCRIPTS/audit.mjs" …` where `$SKILL_SCRIPTS` is the directory containing this SKILL.md plus `/scripts`.
 
-- **`audit.mjs`** — the whole Classify phase in one pass. Enumerates branches
-  (`git for-each-ref`), worktrees + dirty state (`git worktree list --porcelain` +
-  `git status`), pulls `gh pr list`, applies the truth table below, prints the grouped
-  AUTO/PROMPT/NEVER plan. `--json` for machine output; degrades to tracking-state-only
-  if `gh` is unavailable. Does **not** fetch — run `git fetch --prune` first.
+- **`audit.mjs`**: the whole Classify phase in one pass. Enumerates branches (`git for-each-ref`), worktrees with dirty state and ignored files (`git worktree list --porcelain` + `git status --ignored`), pulls `gh pr list`, applies the truth table and worktree guards below, prints the grouped AUTO/PROMPT/NEVER plan. `--json` for machine output; skips the PR rows if `gh` is unavailable. Does **not** fetch: run `git fetch --prune` first.
 
   ```
   node "$SKILL_SCRIPTS/audit.mjs" [--repo owner/repo] [--cwd DIR] [--json]
   ```
 
-- **`stack-check.mjs`** — stack consistency probe. For an ordered stack (bottom-to-top),
-  reports per layer: merge-base with the stack base, whether it sits on the current base
-  tip (restacked), whether it contains the layer below (chain intact), and ahead/behind vs
-  its origin. Surfaces a partial restack at a glance.
-
-  ```
-  node "$SKILL_SCRIPTS/stack-check.mjs" [--base origin/master] [--cwd DIR] layer1 layer2 … (bottom-to-top)
-  ```
-
-Everything these wrap (`git *`, `gh *`, `jq *`) is independently allowlisted, so
-any step can also be run inline. Never reach for `python3`, standalone `VAR=`, `$(…)`, or a
-heredoc piped into `gh` — all of those escalate to a permission prompt.
+Everything it wraps (`git *`, `gh *`, `jq *`) is independently allowlisted, so any step can also be run inline. Never reach for `python3`, standalone `VAR=`, `$(…)`, or a heredoc piped into `gh`: all of those escalate to a permission prompt.
 
 ## Always-on behavior
 
@@ -60,7 +39,7 @@ Run unconditionally before classification, in this order:
 1. `git fetch --prune` (refreshes `[gone]` markers and merge state).
 2. `git worktree prune` (clears orphaned `.git/worktrees/<name>` metadata).
 
-In `--dry-run`, still run `git fetch --prune` and `git worktree prune` (both read-only-effect). Skip all destructive actions.
+In `--dry-run`, run `git fetch --prune` only. Skip `git worktree prune` (it deletes worktree metadata) and all destructive actions.
 
 ## Classification
 
@@ -72,52 +51,62 @@ For each local branch, evaluate the rules **top-down** and stop at the first mat
 
 | # | Condition | Action | Reason printed |
 |---|---|---|---|
-| 1 | Current branch in any worktree | NEVER | current branch |
-| 2 | Default branch (`origin/HEAD` target) | NEVER | default branch |
+| 1 | Branch checked out in the audited (`$PWD`) worktree | NEVER | current branch |
+| 2 | `main`, `master`, or the resolved default branch | NEVER | default branch |
 | 3 | Worktree's `git -C <wt> status --porcelain` returns non-empty | NEVER | uncommitted changes in worktree |
 | 4 | PR matches by `headRefName` AND PR state is OPEN or DRAFT | NEVER | PR #N open/draft |
-| 5 | PR matches AND PR state is MERGED | AUTO local; PROMPT remote-delete if `git ls-remote --heads origin <branch>` returns a ref | PR #N merged |
-| 6 | PR matches AND PR state is CLOSED (not merged) | PROMPT | PR #N closed |
-| 7 | No PR match (neither local name nor gone-upstream name) AND upstream is `[gone]` | AUTO | upstream gone, no PR |
-| 8 | No PR match AND branch has unpushed commits (ahead of own upstream) | PROMPT | N unpushed commits |
-| 9 | No PR match AND no upstream (never pushed) | PROMPT | no PR, never pushed |
-| 10 | No PR match AND upstream tracks a ref that is not `origin/<this-branch>` | PROMPT | no PR, tracks `<ref>` |
+| 5 | PR matches, state MERGED or CLOSED, AND the local tip is neither the PR's `headRefOid` nor an ancestor of it (`git merge-base --is-ancestor`) | PROMPT | PR #N merged/closed, local tip not in PR head |
+| 6 | PR matches AND PR state is MERGED | AUTO local; PROMPT remote-delete if `git ls-remote --heads origin <branch>` returns a ref | PR #N merged |
+| 7 | PR matches AND PR state is CLOSED (not merged) | PROMPT | PR #N closed |
+| 8 | No PR match (neither local name nor gone-upstream name) AND upstream is `[gone]` AND `git rev-list <branch> --not --remotes` is empty | AUTO | upstream gone, no PR |
+| 9 | No PR match AND upstream is `[gone]` AND the branch has commits on no remote ref | PROMPT | upstream gone, no PR, N commits on no remote |
+| 10 | No PR match AND branch has unpushed commits (ahead of `origin/<this-branch>`) | PROMPT | N unpushed commits |
+| 11 | No PR match AND no upstream (never pushed) | PROMPT | no PR, never pushed |
+| 12 | No PR match AND upstream tracks a ref that is not `origin/<this-branch>` | PROMPT | no PR, tracks `<ref>` |
+| 13 | No PR match AND in sync with or behind `origin/<this-branch>` | PROMPT | no PR, in sync with origin (or the track state, e.g. `[behind 2]`) |
+
+Resolved default branch: the `origin/HEAD` target; if `origin/HEAD` is unset, `origin/main` or `origin/master` when that ref exists; otherwise `git config init.defaultBranch`, else `main`. Row 2 protects `main` and `master` regardless of what resolves.
+
+Row 5 catches a branch name reused for new work after an old PR on that name was merged or closed. A branch force-pushed by a rebase can also land here (its local tip is a pre-rebase state); PROMPT is the intended outcome.
 
 Tie-break: if a branch matches multiple PRs (rare; closed-then-reopened), pick the most recent by `updatedAt`.
 
-Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO sweep, batched (see step 8 of the single-repo flow). Probe with `git ls-remote --heads origin <branch>` rather than relying on `git branch -vv` markers, because the local tracking ref may be stale or absent.
+Row 6 detail: the remote-delete prompt fires per-branch at the end of the AUTO sweep, batched (see step 8 of the single-repo flow). Probe with `git ls-remote --heads origin <branch>` rather than relying on `git branch -vv` markers, because the local tracking ref may be stale or absent.
 
 ### Worktree handling derived from branch classification
 
+After the truth table, two worktree guards run on any branch a worktree holds (NEVER results are left alone):
+
+- Worktree path missing on disk: demote to PROMPT, reason suffixed `; worktree path missing (prunable)`. On confirm, run `git worktree prune` instead of `worktree remove`, then `git branch -D`.
+- AUTO with ignored files in the worktree (`git -C <wt> status --ignored --porcelain`, `!!` lines): demote to PROMPT, reason suffixed `; worktree has N ignored paths (...)`, because `git worktree remove --force` deletes ignored files such as gitignored `tmp/` notes. Paths under `node_modules`, `.turbo`, `.next`, `.cache`, `dist`, or `bin` count as regenerable build caches and are not counted. Neither does a `*.local.conf` whose first line is a `# Managed by ... do not edit` marker, such as the per-worktree database overlays omsx `scripts/worktree-setup.sh` writes; an unmarked `*.local.conf` may hold hand edits and still counts.
+
+Then:
+
 - Branch resolves to AUTO delete (or PROMPT accepted): remove its worktree first (`git worktree remove --force <path>`), then `git branch -D <name>`.
 - Worktree points to a NEVER branch: leave it.
-- Worktree has detached HEAD, missing on-disk path, or already-deleted branch: collect into the stale-worktree prompt batch.
+- Worktree has detached HEAD or an already-deleted branch: collect into the stale-worktree prompt batch.
 
 ### PR query mechanics
 
-- One `gh pr list --state all --limit 1000 --json number,state,headRefName,updatedAt,url --repo <owner/repo>` per repo. Cache results for the run.
+- One `gh pr list --state all --limit 1000 --json number,state,headRefName,headRefOid,updatedAt --repo <owner/repo>` per repo. Cache results for the run.
 - Do **not** filter by `--author @me`. Match by `headRefName` client-side so co-authored branches are covered.
-- If a repo has >1000 PRs and some local branches were not matched in the first pass, fall back to per-branch `gh pr list --head <branch> --state all --json number,state,updatedAt,url` queries.
-- If `gh` is unavailable or unauthenticated: degrade to rows 1–3 and 7–10 only (skip rows 4–6, which all depend on PR match). Print one-line notice.
+- If the bulk list returns the full 1000 (truncated), each branch with no match falls back to a per-branch `gh pr list --head <ref> --state all --json number,state,headRefName,headRefOid,updatedAt` query, for the local name and then the gone-upstream name. A failed per-branch query classifies the branch PROMPT (`per-branch PR lookup failed`).
+- If `gh` is unavailable or unauthenticated, or there is no `origin` remote to derive `owner/repo` from: skip rows 4-7 (they depend on PR match) and apply rows 1-3 and 8-13. Print one-line notice.
 
 ## Single-repo execution flow (`/git-cleanup`)
 
 1. **Preflight.**
    - Verify `$PWD` is a git repo: `git -C "$PWD" rev-parse --is-inside-work-tree`.
    - Capture current branch: `git -C "$PWD" branch --show-current`.
-   - Capture default branch: `git -C "$PWD" symbolic-ref refs/remotes/origin/HEAD | sed 's|^refs/remotes/origin/||'`.
+   - Capture default branch: `git -C "$PWD" symbolic-ref refs/remotes/origin/HEAD | sed 's|^refs/remotes/origin/||'`, with the fallbacks under the truth table when `origin/HEAD` is unset.
    - Capture worktree list: `git -C "$PWD" worktree list --porcelain`. Note which branch each worktree holds.
-   - Run `git -C "$PWD" worktree prune`.
+   - Run `git -C "$PWD" worktree prune` (skipped in `--dry-run`).
 2. **Refresh state.** `git -C "$PWD" fetch --prune`.
-3. **Enumerate + Classify.** Run `node "$SKILL_SCRIPTS/audit.mjs" --cwd "$PWD" --json` (see
-   [Helper scripts](#helper-scripts)). One call enumerates branches, worktrees + dirty state,
-   pulls `gh pr list`, applies the truth table, and returns `{AUTO[], PROMPT[], NEVER[]}` with the
-   reason and worktree path per branch. Fall back to the inline commands below only if the script
-   is unavailable:
+3. **Enumerate + Classify.** Run `node "$SKILL_SCRIPTS/audit.mjs" --cwd "$PWD" --json` (see [Helper scripts](#helper-scripts)). One call enumerates branches, worktrees with dirty state and ignored files, pulls `gh pr list`, applies the truth table and worktree guards, and returns `rows[]` with `action`, `reason`, `worktree` path, and `ignored` paths per branch. Fall back to the inline commands below only if the script is unavailable:
    - `git -C "$PWD" for-each-ref --format='%(refname:short)\t%(upstream:short)\t%(upstream:track)' refs/heads/`.
    - `git -C "$PWD" worktree list --porcelain` (cross-reference worktree paths).
-   - `gh pr list --state all --limit 1000 --json number,state,headRefName,updatedAt,url --repo <owner/repo>` once; cache by `headRefName`.
-4. **Bucket the PROMPT set** by reason for step 7: `closed PR`, `unpushed commits`, `no PR, never pushed`, `no PR, tracks <ref>`.
+   - `gh pr list --state all --limit 1000 --json number,state,headRefName,headRefOid,updatedAt --repo <owner/repo>` once; cache by `headRefName`.
+4. **Bucket the PROMPT set** by reason for step 7: `closed PR` (row 7), `PR head mismatch` (row 5), `unpushed commits` (rows 9-10), `no PR` (rows 11 and 13), `non-origin tracked` (row 12), `worktree guard` (missing path or ignored files), `PR lookup failed`.
 5. **Print the plan.** Always, before executing any destructive action:
 
    ```
@@ -139,8 +128,8 @@ Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO s
    - `y`: delete all in the bucket (worktree-remove first, then `branch -D`).
    - `N`: skip the entire bucket.
    - `i`: fall through to per-branch `[y/N/s]kip` prompts.
-8. **Remote-deletion sub-prompt** (only for branches deleted via row 5 — merged PR — whose `origin/<branch>` still exists). After the main loop:
-   - For each row-5 AUTO branch, probe `git ls-remote --heads origin <branch>`. Collect those that return a non-empty result.
+8. **Remote-deletion sub-prompt** (only for branches deleted via row 6, merged PR, whose `origin/<branch>` still exists). After the main loop:
+   - For each row-6 AUTO branch, probe `git ls-remote --heads origin <branch>`. Collect those that return a non-empty result.
    - Ask: `Push-delete <N> merged remote branches on origin? [y/N/i]`.
    - On confirm: `git -C "$PWD" push origin --delete <branch>` per branch.
    - Hard rail: refuse to push-delete if the target is the default branch (defense in depth on row 2).
@@ -151,9 +140,9 @@ Row 5 detail: the remote-delete prompt fires per-branch at the end of the AUTO s
 
 Behaves like the single-repo flow with these differences:
 
-- Runs `git fetch --prune`, `git worktree prune`, and `gh pr list` (all read-only-effect).
+- Runs `git fetch --prune` and `gh pr list`. Does not run `git worktree prune`.
 - Prints the full plan exactly as in step 5 of the single-repo flow.
-- Exits before steps 6–10 with the message:
+- Exits before steps 6-10 with the message:
 
   ```
   dry-run: nothing changed. Re-run without --dry-run to execute.
@@ -191,10 +180,12 @@ For each discovered repo, in sequence:
 After Pass 1 completes for all repos, walk the global PROMPT queue once, grouped by reason bucket (not by repo):
 
 - "Across all repos: <N> closed-PR branches, delete all? [y/N/i]"
+- "Across all repos: <N> branches whose tip is not in their PR head, delete? [y/N/i]"
 - "Across all repos: <N> branches with unpushed commits, delete? [y/N/i]"
 - "Across all repos: <N> branches with no PR, delete? [y/N/i]"
-- "Across all repos: <N> diverged branches, delete? [y/N/i]"
 - "Across all repos: <N> non-origin tracked branches, delete? [y/N/i]"
+- "Across all repos: <N> branches held by guarded worktrees (missing path or ignored files), delete? [y/N/i]"
+- "Across all repos: <N> branches whose PR lookup failed, delete? [y/N/i]"
 
 `i` falls through to per-item prompts in the form `<repo>: <branch> [reason], delete? [y/N/s]kip`.
 
@@ -232,17 +223,17 @@ webrpc          1      0            0           3       0
 | Failure | Behavior |
 |---|---|
 | Not in a git repo (single mode) | Abort with message |
-| `gh` not installed or not authenticated | Degrade to rows 1–3 and 7–10 only (skip rows 4–6, which depend on PR match). One-line notice. |
+| `gh` not installed or not authenticated | Skip rows 4-7 (they depend on PR match); apply rows 1-3 and 8-13. One-line notice. |
 | `git fetch` network failure | Abort (classification depends on fresh state). Single mode: exit. Sweep mode: skip the repo with reason `fetch failed`. |
-| Worktree path no longer on disk | Stale-worktree prompt, not an error. |
+| Worktree path no longer on disk | Branch demoted to PROMPT by the worktree guard; a detached one goes to the stale-worktree prompt. Not an error. |
 | Currently inside a worktree on an otherwise-deletable branch | Mark NEVER. Print: `cd to main repo at <path> and re-run to delete <branch>`. |
-| Repo with no `origin` remote | Degrade to upstream-only rules; all PR-based rows degrade to PROMPT. |
-| `gh pr list` returns >1000 PRs | Fall back to per-branch `gh pr list --head <branch>` for unmatched branches. |
+| Repo with no `origin` remote | No `owner/repo` to query, so handled as `gh` unavailable: skip rows 4-7. |
+| `gh pr list` returns the full 1000 PRs | Per-branch `gh pr list --head <branch>` for unmatched branches; a failed lookup classifies PROMPT. |
 
 ## Hard "never do this" rails
 
 1. Never push-delete a remote branch whose target is the repo's default branch.
-2. Never act on a branch that is the current branch in **any** worktree, not just `$PWD`.
+2. Never act on the branch checked out in the audited `$PWD` worktree. A branch checked out in another clean worktree is eligible; its worktree is removed first (rail 3).
 3. Never `git branch -D` before removing the worktree pointing at it.
 4. Never act in `--all` sweep without classifying first; no "delete first, ask later".
 
@@ -253,5 +244,5 @@ The skill does **not**:
 - Touch tags or stashes.
 - Update `TODO.local.md` or `~/TODO.md`.
 - Manage non-`origin` remotes beyond classifying their branches as PROMPT.
-- Support fork-based PR workflows (where `origin` is a fork and PRs live on upstream). PR matching will miss; affected branches degrade to the no-PR rows (7–10).
+- Support fork-based PR workflows (where `origin` is a fork and PRs live on upstream). PR matching will miss; affected branches degrade to the no-PR rows (8-13).
 - Descend into submodule checkouts during `--all` sweep.
