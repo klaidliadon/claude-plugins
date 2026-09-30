@@ -1,0 +1,64 @@
+{
+  "id": "2ba0f1ec-fd72-44dc-9ac4-474bf313587d",
+  "ok": true,
+  "result": {
+    "worktree": {
+      "id": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+      "identity": {
+        "key": "wt2:local:b457f6c8-b521-4183-a877-b3d33c454b32",
+        "executionHostId": "local",
+        "instanceId": "b457f6c8-b521-4183-a877-b3d33c454b32"
+      },
+      "instanceId": "b457f6c8-b521-4183-a877-b3d33c454b32",
+      "repoId": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37",
+      "projectId": "github:klaidliadon/claude-plugins",
+      "hostId": "local",
+      "projectHostSetupId": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37",
+      "creatorProvenance": {
+        "kind": "host"
+      },
+      "path": "/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+      "head": "c7b185851b9b2b73858aa35020f57bb10a3bf24a",
+      "branch": "refs/heads/klaidliadon/fleet-spike",
+      "isBare": false,
+      "isMainWorktree": false,
+      "displayName": "fleet-spike",
+      "displayNameMode": "fixed",
+      "comment": "",
+      "linkedIssue": null,
+      "linkedPR": null,
+      "linkedLinearIssue": null,
+      "linkedLinearIssueWorkspaceId": null,
+      "linkedLinearIssueOrganizationUrlKey": null,
+      "linkedGitLabMR": null,
+      "linkedGitLabIssue": null,
+      "linkedBitbucketPR": null,
+      "linkedAzureDevOpsPR": null,
+      "linkedGiteaPR": null,
+      "linkedWorkItem": null,
+      "linkedTaskSourceContext": null,
+      "isArchived": false,
+      "isUnread": true,
+      "isPinned": false,
+      "sortOrder": 1790798352617,
+      "lastActivityAt": 1790798304335,
+      "createdAt": 1790798248621,
+      "createdWithAgent": "claude",
+      "baseRef": "refs/remotes/origin/main",
+      "workspaceStatus": "in-progress",
+      "parentWorktreeId": null,
+      "childWorktreeIds": [],
+      "lineage": null,
+      "git": {
+        "path": "/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+        "head": "c7b185851b9b2b73858aa35020f57bb10a3bf24a",
+        "branch": "refs/heads/klaidliadon/fleet-spike",
+        "isBare": false,
+        "isMainWorktree": false
+      }
+    }
+  },
+  "_meta": {
+    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+  }
+}

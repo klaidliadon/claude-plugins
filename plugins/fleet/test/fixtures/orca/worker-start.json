@@ -1,0 +1,92 @@
+{
+  "id": "cc604779-513b-4814-951b-cda1ba99aa01",
+  "ok": true,
+  "result": {
+    "runId": "run_17c08028b992",
+    "taskId": "task_9819fc646159",
+    "dispatchId": "ctx_b8a0ab53d622",
+    "state": "ready",
+    "stage": "input_accepted",
+    "turnStart": "observed",
+    "setup": {
+      "requested": "run",
+      "effective": "run",
+      "source": "orchestration_default",
+      "hookFound": false,
+      "startupPolicy": "start-immediately",
+      "state": "not_configured"
+    },
+    "launch": {
+      "requested": {
+        "agent": "claude",
+        "model": null,
+        "effort": null
+      },
+      "effective": {
+        "agent": "claude",
+        "model": null,
+        "effort": null
+      }
+    },
+    "mode": {
+      "mode": "terminal",
+      "preferred": "terminal",
+      "reason": "user_default",
+      "detail": "Started a terminal agent worker, the default for new agent tabs in your settings."
+    },
+    "timeoutMs": 60000,
+    "effects": [
+      {
+        "kind": "worktree",
+        "action": "created_top_level",
+        "id": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike"
+      },
+      {
+        "kind": "terminal",
+        "role": "agent",
+        "action": "created",
+        "id": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+        "tabId": "f20e3562-2342-459c-9753-16a7fc4c9c45",
+        "leafId": "c21be3b4-e56e-4970-8e76-8eb92339975d"
+      },
+      {
+        "kind": "setup",
+        "action": "run",
+        "requested": "run",
+        "effective": "run",
+        "source": "orchestration_default",
+        "hookFound": false,
+        "startupPolicy": "start-immediately",
+        "state": "not_configured"
+      },
+      {
+        "kind": "dispatch_input",
+        "role": "agent",
+        "id": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+        "state": "accepted"
+      }
+    ],
+    "prompt": {
+      "requestId": "8029614d-1df2-408e-9217-5a02dacd0734",
+      "stages": [
+        "input_accepted",
+        "turn_started"
+      ],
+      "provider": "claude",
+      "observation": "supported",
+      "processIncarnation": "2a5687b7-e04f-4472-88e9-ce540c09d340",
+      "generation": 66,
+      "baselineWorkingSequence": 0,
+      "baselineExplicitWorkingStartedAt": null,
+      "baselinePermissionSequence": 1
+    },
+    "residualResources": [],
+    "mutation": {
+      "requestId": "8029614d-1df2-408e-9217-5a02dacd0734",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+  }
+}

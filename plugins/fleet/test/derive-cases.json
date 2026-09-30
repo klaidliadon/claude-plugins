@@ -1,0 +1,496 @@
+[
+  {
+    "name": "drafted",
+    "input": {
+      "approved_at": null,
+      "spec_reviewed": false,
+      "rounds": [],
+      "pr": null
+    },
+    "want": {
+      "state": "drafted",
+      "next": "run spec review"
+    }
+  },
+  {
+    "name": "spec-reviewed",
+    "input": {
+      "approved_at": null,
+      "rounds": [],
+      "pr": null
+    },
+    "want": {
+      "state": "spec-reviewed",
+      "next": "await your go"
+    }
+  },
+  {
+    "name": "waiting",
+    "input": {
+      "deps_unmerged": [
+        "1-api"
+      ],
+      "rounds": [],
+      "pr": null
+    },
+    "want": {
+      "state": "waiting",
+      "next": "blocked on 1-api merge"
+    }
+  },
+  {
+    "name": "approved-not-dispatched",
+    "input": {
+      "rounds": [],
+      "pr": null
+    },
+    "want": {
+      "state": "approved",
+      "next": "dispatch round 1"
+    }
+  },
+  {
+    "name": "running-no-pr",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": []
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "done-without-pr",
+    "input": {
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "worker done without PR: inspect"
+    }
+  },
+  {
+    "name": "failed",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "failed",
+          "done_at": null,
+          "reviewers": []
+        }
+      ]
+    },
+    "want": {
+      "next": "round 1 failed: inspect"
+    }
+  },
+  {
+    "name": "review-incomplete",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial",
+            "tests"
+          ]
+        }
+      ]
+    },
+    "want": {
+      "state": "in-review",
+      "next": "run reviews round 1",
+      "review": "running"
+    }
+  },
+  {
+    "name": "findings",
+    "input": {},
+    "want": {
+      "state": "in-review",
+      "next": "start fix round 2",
+      "review": "🟡1"
+    }
+  },
+  {
+    "name": "findings-stale",
+    "input": {
+      "now": 1759500000
+    },
+    "want": {
+      "next": "start fix round 2 (fresh agent)"
+    }
+  },
+  {
+    "name": "fixing",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        },
+        {
+          "round": 2,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": []
+        }
+      ]
+    },
+    "want": {
+      "state": "fixing",
+      "next": "wait worker",
+      "review": "🟡1"
+    }
+  },
+  {
+    "name": "escalate",
+    "input": {
+      "rounds": [
+        {
+          "round": 3,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        }
+      ],
+      "reviews": {
+        "3": {
+          "adversarial": {
+            "critical": 1,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      }
+    },
+    "want": {
+      "next": "escalate: 3 rounds not clean"
+    }
+  },
+  {
+    "name": "ci-failure",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 2
+          }
+        }
+      },
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "failure",
+        "approved": false
+      }
+    },
+    "want": {
+      "next": "start fix round 2 with CI log",
+      "review": "🟢2"
+    }
+  },
+  {
+    "name": "ci-pending",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "pending",
+        "approved": false
+      }
+    },
+    "want": {
+      "next": "wait CI",
+      "review": "clean"
+    }
+  },
+  {
+    "name": "early-approval",
+    "input": {
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "success",
+        "approved": true
+      }
+    },
+    "want": {
+      "state": "in-review",
+      "next": "start fix round 2"
+    }
+  },
+  {
+    "name": "ready-unreleased",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      }
+    },
+    "want": {
+      "state": "ready",
+      "next": "release worker"
+    }
+  },
+  {
+    "name": "ready",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        }
+      ]
+    },
+    "want": {
+      "state": "ready",
+      "next": "needs human approval"
+    }
+  },
+  {
+    "name": "ready-approved",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        }
+      ],
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "success",
+        "approved": true
+      }
+    },
+    "want": {
+      "state": "ready",
+      "next": "start lander"
+    }
+  },
+  {
+    "name": "landing",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "running",
+          "done_at": null,
+          "reviewers": []
+        }
+      ]
+    },
+    "want": {
+      "state": "landing",
+      "next": "wait lander"
+    }
+  },
+  {
+    "name": "merged",
+    "input": {
+      "pr": {
+        "number": 1,
+        "state": "MERGED",
+        "ci": "success",
+        "approved": true
+      }
+    },
+    "want": {
+      "state": "merged",
+      "next": "propose cleanup"
+    }
+  },
+  {
+    "name": "closed",
+    "input": {
+      "pr": {
+        "number": 1,
+        "state": "CLOSED",
+        "ci": "none",
+        "approved": false
+      }
+    },
+    "want": {
+      "state": "closed",
+      "next": "closed unmerged: your call"
+    }
+  },
+  {
+    "name": "ask-overrides",
+    "input": {
+      "asks": 1,
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": []
+        }
+      ]
+    },
+    "want": {
+      "inbox": "1 ask",
+      "next": "answer question"
+    }
+  },
+  {
+    "name": "ci-failure-capped",
+    "input": {
+      "rounds": [
+        {
+          "round": 3,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        }
+      ],
+      "reviews": {
+        "3": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "failure",
+        "approved": false
+      }
+    },
+    "want": {
+      "next": "escalate: 3 rounds not clean"
+    }
+  },
+  {
+    "name": "ci-failure-after-release",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        }
+      ],
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "failure",
+        "approved": false
+      }
+    },
+    "want": {
+      "next": "start fix round 2 with CI log (fresh agent)"
+    }
+  }
+]
