@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$BIN/lib.sh"
+
+counts_of() {
+  local line
+  line="$(head -1 "$1")"
+  [[ "$line" =~ critical=([0-9]+)\ important=([0-9]+)\ suggestion=([0-9]+) ]] || return 1
+  printf '{"critical":%s,"important":%s,"suggestion":%s}' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+}
+
+reviews_json() {
+  local f base round name c acc='{}'
+  for f in "$1"/review-*-*.md; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f" .md)"
+    round="${base#review-}"
+    round="${round%%-*}"
+    name="${base#review-"$round"-}"
+    c="$(counts_of "$f")" || continue
+    acc="$(jq -c --arg r "$round" --arg n "$name" --argjson c "$c" '.[$r][$n] = $c' <<<"$acc")"
+  done
+  printf '%s' "$acc"
+}
+
+pr_json() {
+  [ -n "$1" ] || { echo null; return; }
+  gh pr view "$1" --json number,state,statusCheckRollup,reviewDecision | jq -c '{
+    number, state,
+    approved: (.reviewDecision == "APPROVED"),
+    ci: ((.statusCheckRollup // []) as $c
+      | if ($c | length) == 0 then "none"
+        elif any($c[]; (.conclusion // "") == "FAILURE") then "failure"
+        elif any($c[]; (.status // "COMPLETED") != "COMPLETED") then "pending"
+        else "success" end)
+  }'
+}
+
+orca_task_statuses() {
+  orca orchestration task-list --run "$1" --json | jq -ce '[.result.tasks[] | {key: .id, value: {
+    status: ({dispatched: "running", completed: "completed", failed: "failed"}[.status] // "unknown"),
+    done_at: (if .completed_at then (.completed_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) else null end)
+  }}] | from_entries'
+}
+
+orca_asks() {
+  orca orchestration check --run "$1" --peek --json |
+    jq -ce '[.result.messages[] | select(.type == "question") | .from_handle | sub("^dispatch:"; "")]'
+}
+
+rows=()
+for spec in "$FLEET_HOME"/*/*/spec.md; do
+  [ -e "$spec" ] || continue
+  [ -z "$(fm_get "$spec" '.cleaned_at')" ] || continue
+  dir="$(dirname "$spec")"
+  objdir="$(dirname "$dir")"
+  run="$(cat "$objdir/run.id" 2>/dev/null || true)"
+  statuses='{}' asks='[]'
+  if [ -n "$run" ]; then
+    statuses="$(orca_task_statuses "$run")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
+    asks="$(orca_asks "$run")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
+  fi
+  unmerged='[]'
+  for dep in $(fm_get "$spec" '.depends_on[]'); do
+    dpr="$(fm_get "$objdir/$dep/spec.md" '.pr')"
+    dstate=NONE
+    [ -z "$dpr" ] || dstate="$(gh pr view "$dpr" --json state -q .state)"
+    [ "$dstate" = MERGED ] || unmerged="$(jq -c --arg d "$dep" '. + [$d]' <<<"$unmerged")"
+  done
+  reviewed=false
+  [ ! -f "$dir/spec-review.md" ] || reviewed=true
+  rows+=("$(jq -c -n \
+    --argjson fm "$(yq -o=json --front-matter=extract '.' "$spec")" \
+    --argjson st "$statuses" --argjson asks "$asks" \
+    --argjson reviews "$(reviews_json "$dir")" \
+    --argjson pr "$(pr_json "$(fm_get "$spec" '.pr')")" \
+    --argjson unmerged "$unmerged" --argjson reviewed "$reviewed" \
+    --argjson now "$(date +%s)" '{
+      objective: $fm.objective, task: $fm.task, repo: $fm.repo,
+      approved_at: ($fm.approved_at // null), spec_reviewed: $reviewed,
+      deps_unmerged: $unmerged,
+      rounds: [($fm.orca // [])[] | . + ($st[.task_id] // {status: "unknown", done_at: null})],
+      reviews: $reviews, pr: $pr,
+      asks: ([($fm.orca // [])[].dispatch_id] as $ids | [$asks[] | select(. as $a | $ids | index($a))] | length),
+      now: $now
+    }' | jq -c -f "$BIN/derive.jq")")
+done
+
+if [ "${1:-}" = "--tsv" ]; then
+  for r in ${rows[@]+"${rows[@]}"}; do jq -r '[.objective, .task, .state, .next] | @tsv' <<<"$r"; done
+  exit 0
+fi
+{
+  printf 'OBJECTIVE\tTASK\tREPO\tPR\tSTATE\tCI\tREVIEW\tINBOX\tNEXT\n'
+  for r in ${rows[@]+"${rows[@]}"}; do
+    jq -r '[.objective, .task, .repo, .pr, .state, .ci, .review, .inbox, .next] | @tsv' <<<"$r"
+  done
+} | column -t -s $'\t'

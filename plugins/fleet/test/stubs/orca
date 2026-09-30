@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 echo "orca $*" >>"$STUB_LOG"
-if [ "$1 $2" = "worktree rm" ]; then
-  git -C "$STUB_PRIMARY" worktree remove --force "$STUB_WT_PATH"
-  echo '{"ok":true}'
-fi
+[ "${STUB_ORCA_FAIL:-}" = 1 ] && exit 1
+case "$1 $2" in
+  "worktree rm")
+    git -C "$STUB_PRIMARY" worktree remove --force "$STUB_WT_PATH"
+    echo '{"ok":true}'
+    ;;
+  "orchestration task-list") cat "$STUB_ORCA_TASKS" ;;
+  "orchestration check") cat "$STUB_ORCA_CHECK" ;;
+esac
