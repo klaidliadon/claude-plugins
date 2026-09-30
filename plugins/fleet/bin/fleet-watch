@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BIN="$(cd "$(dirname "$0")" && pwd)"
+cmd="${FLEET_STATUS_CMD:-$BIN/fleet-status --tsv}"
+once=0 state="${TMPDIR:-/tmp}/fleet-watch.state"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --once) once=1 ;;
+    --state) state="$2"; shift ;;
+  esac
+  shift
+done
+touch "$state"
+
+poll() {
+  local now
+  if ! now="$($cmd)"; then
+    [ -f "$state.failed" ] || { echo "fleet-watch: status failed"; touch "$state.failed"; }
+    return 0
+  fi
+  rm -f "$state.failed"
+  now="$(printf '%s\n' "$now" | sed '/^$/d')"
+  awk -F'\t' 'FILENAME == ARGV[1] { old[$1 "/" $2] = $3 "\t" $4; next }
+    { k = $1 "/" $2; seen[k] = 1; if (old[k] != $3 "\t" $4) print k ": " $4 }
+    END { for (k in old) if (!(k in seen)) print k ": gone"; fflush() }' "$state" <(printf '%s\n' "$now")
+  printf '%s\n' "$now" >"$state"
+}
+
+if [ "$once" = 1 ]; then poll; exit 0; fi
+while true; do
+  poll
+  sleep "${FLEET_WATCH_INTERVAL:-60}"
+done
