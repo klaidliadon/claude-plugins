@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+[ "${FLEET_MANAGER:-}" = 1 ] || exit 0
+echo "Fleet status (you are the fleet manager; load the fleet-manager skill):"
+"$(dirname "$0")/fleet-status" 2>&1 || echo "fleet-status failed: report this before acting"
