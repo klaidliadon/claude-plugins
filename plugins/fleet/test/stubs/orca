@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+echo "orca $*" >>"$STUB_LOG"
+if [ "$1 $2" = "worktree rm" ]; then
+  git -C "$STUB_PRIMARY" worktree remove --force "$STUB_WT_PATH"
+  echo '{"ok":true}'
+fi

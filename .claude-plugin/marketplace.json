@@ -70,6 +70,12 @@
       "description": "Structure a decision-ready engineering design proposal: a worth-it gate that sizes the artifact (ticket or PR body vs standalone doc), recommendation-first argument, source-authority discipline (facts vs recommendations), the layered design+plan/spec structure for larger proposals, alternatives, review reconciliation, and the design and rationale split once a proposal lands. Delegates prose quality to writing-for-humans.",
       "source": "./plugins/design-proposal",
       "category": "workflow"
+    },
+    {
+      "name": "fleet",
+      "description": "One manager session runs spec-gated Orca workers, one per PR, with independent review and confirmed cleanup.",
+      "source": "./plugins/fleet",
+      "category": "workflow"
     }
   ]
 }
