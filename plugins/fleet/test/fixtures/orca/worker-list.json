@@ -1,0 +1,109 @@
+{
+  "id": "b02e523e-0b50-4286-be8f-ec384c22f7f8",
+  "ok": true,
+  "result": {
+    "workers": [
+      {
+        "dispatchId": "ctx_b8a0ab53d622",
+        "taskId": "task_9819fc646159",
+        "runId": "run_17c08028b992",
+        "workerState": "ready",
+        "dispatchStatus": "dispatched",
+        "agentTerminalHandle": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+        "terminalState": "active",
+        "resource": {
+          "id": "wtr_fcb4b8543967",
+          "ownershipState": "owned",
+          "releaseState": "not_requested",
+          "retainedReason": null,
+          "terminalHandle": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+          "worktreeId": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+          "endpointId": "acc5c5a5-9615-4d9f-9781-72a36a073443",
+          "endpointIncarnation": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike@@8555e30d:2a5687b7-e04f-4472-88e9-ce540c09d340",
+          "originDispatchId": "ctx_b8a0ab53d622",
+          "ownerDispatchId": "ctx_b8a0ab53d622",
+          "releaseRequestedAt": null,
+          "releaseCompletedAt": null,
+          "releaseError": null,
+          "recoveryAttemptCount": 0,
+          "lastRecoveryAt": null,
+          "archive": {
+            "source": null,
+            "status": null
+          }
+        },
+        "projection": {
+          "id": "ctx_b8a0ab53d622",
+          "dispatchId": "ctx_b8a0ab53d622",
+          "taskId": "task_9819fc646159",
+          "runId": "run_17c08028b992",
+          "role": "worker",
+          "parent": null,
+          "provider": {
+            "id": "claude",
+            "model": null
+          },
+          "host": {
+            "kind": "local",
+            "id": "local"
+          },
+          "workspace": {
+            "id": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+            "kind": "folder_or_worktree"
+          },
+          "stage": {
+            "worker": "ready",
+            "dispatch": "dispatched",
+            "detail": "input_accepted",
+            "activity": "working"
+          },
+          "outcome": "in_progress",
+          "liveness": {
+            "verdict": "live",
+            "observedAt": 1790798264269,
+            "source": "agent_status"
+          },
+          "evidence": {
+            "durable": true,
+            "liveStatus": "fresh",
+            "lastObservedAt": 1790798264269
+          },
+          "resource": {
+            "state": "owned"
+          },
+          "nextAction": {
+            "kind": "inspect",
+            "argv": [
+              "orchestration",
+              "worker-show",
+              "--dispatch",
+              "ctx_b8a0ab53d622"
+            ]
+          },
+          "attention": {
+            "categories": [
+              "input"
+            ],
+            "requiresAction": true
+          }
+        }
+      }
+    ],
+    "counts": {
+      "active": 1
+    },
+    "page": {
+      "limit": 100,
+      "total": 1,
+      "hasMore": false,
+      "nextCursor": null
+    },
+    "scope": {
+      "run": "run_17c08028b992",
+      "source": "flag"
+    }
+  },
+  "_meta": {
+    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+  }
+}

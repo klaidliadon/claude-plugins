@@ -1,0 +1,38 @@
+{
+  "id": "f18afb0c-afc8-4df3-b5f8-567de66ca4be",
+  "ok": true,
+  "result": {
+    "runId": "run_17c08028b992",
+    "deliveryId": "delivery_6de48446b033",
+    "messages": [
+      {
+        "id": "msg_cfc648cd69e6",
+        "run_id": "run_17c08028b992",
+        "delivery_contract": "current_delivery",
+        "from_handle": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+        "to_handle": "run:run_17c08028b992",
+        "subject": "SPIKE.md written: one, two",
+        "body": "Created SPIKE.md with 'one', asked the coordinator 'which word next?' via the blocking ask, and appended the reply. The ask round-trip worked and returned 'two', so SPIKE.md now holds 'one' and 'two' on separate lines. Nothing left; the file is uncommitted as instructed.",
+        "type": "worker_done",
+        "priority": "normal",
+        "thread_id": null,
+        "payload": "{\"taskId\":\"task_9819fc646159\",\"dispatchId\":\"ctx_b8a0ab53d622\",\"outcome\":\"succeeded\",\"filesModified\":[\"SPIKE.md\"]}",
+        "created_at": "2026-09-30T19:58:21Z",
+        "delivered_at": null
+      }
+    ],
+    "count": 1,
+    "replayed": false,
+    "acknowledged": "delivery_8692ad61cb10",
+    "timedOut": false,
+    "cancelled": false,
+    "connectionLost": false,
+    "mutation": {
+      "requestId": "840365c1-dddc-4d4b-8bfb-7569375a279a",
+      "replayed": false
+    }
+  },
+  "_meta": {
+    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+  }
+}
