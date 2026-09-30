@@ -40,7 +40,9 @@ def stale($r): $r.done_at != null and (.now - $r.done_at) > 86400;
    elif blocking($w) > 0 then
      (if $w.round >= 3 then {state: "in-review", next: "escalate: 3 rounds not clean"}
       else {state: "in-review", next: ("start fix round \($w.round + 1)" + (if stale($w) then " (fresh agent)" else "" end))} end)
-   elif .pr.ci == "failure" then {state: "in-review", next: "start fix round \($w.round + 1) with CI log"}
+   elif .pr.ci == "failure" then
+     (if $w.round >= 3 then {state: "in-review", next: "escalate: 3 rounds not clean"}
+      else {state: "in-review", next: ("start fix round \($w.round + 1) with CI log" + (if ($w.released // false) or stale($w) then " (fresh agent)" else "" end))} end)
    elif .pr.ci != "success" then {state: "in-review", next: "wait CI"}
    elif ($w.released | not) then {state: "ready", next: "release worker"}
    elif .pr.approved then {state: "ready", next: "start lander"}

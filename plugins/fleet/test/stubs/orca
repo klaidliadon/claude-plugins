@@ -6,6 +6,7 @@ case "$1 $2" in
     git -C "$STUB_PRIMARY" worktree remove --force "$STUB_WT_PATH"
     echo '{"ok":true}'
     ;;
+  "worktree show") printf '{"ok":true,"result":{"worktree":{"path":"%s"}}}' "${STUB_WT_SHOW_PATH:-$STUB_WT_PATH}" ;;
   "orchestration task-list") cat "$STUB_ORCA_TASKS" ;;
   "orchestration check") cat "$STUB_ORCA_CHECK" ;;
 esac

@@ -31,8 +31,8 @@ pr_json() {
     approved: (.reviewDecision == "APPROVED"),
     ci: ((.statusCheckRollup // []) as $c
       | if ($c | length) == 0 then "none"
-        elif any($c[]; (.conclusion // "") == "FAILURE") then "failure"
-        elif any($c[]; (.status // "COMPLETED") != "COMPLETED") then "pending"
+        elif any($c[]; (.conclusion // .state // "") as $s | ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] | index($s)) then "failure"
+        elif any($c[]; (.status // .state // "") as $s | ["QUEUED", "IN_PROGRESS", "PENDING", "EXPECTED", "WAITING", "REQUESTED"] | index($s)) then "pending"
         else "success" end)
   }'
 }
@@ -45,8 +45,10 @@ orca_task_statuses() {
 }
 
 orca_asks() {
-  orca orchestration check --run "$1" --peek --json |
-    jq -ce '[.result.messages[] | select(.type == "question") | .from_handle | sub("^dispatch:"; "")]'
+  local answered="[]"
+  [ ! -f "$2" ] || answered="$(jq -R . "$2" | jq -cs .)"
+  orca orchestration check --run "$1" --all --json | jq -ce --argjson answered "$answered" \
+    '[.result.messages[] | select(.type == "question" and (.id as $i | $answered | index($i) | not)) | .from_handle | sub("^dispatch:"; "")]'
 }
 
 rows=()
@@ -59,7 +61,7 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
   statuses='{}' asks='[]'
   if [ -n "$run" ]; then
     statuses="$(orca_task_statuses "$run")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
-    asks="$(orca_asks "$run")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
+    asks="$(orca_asks "$run" "$objdir/answered")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
   fi
   unmerged='[]'
   for dep in $(fm_get "$spec" '.depends_on[]'); do

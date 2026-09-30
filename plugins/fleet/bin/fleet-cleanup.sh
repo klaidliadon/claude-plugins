@@ -26,6 +26,7 @@ path="$(fm_get "$spec" '[.orca[] | select(.kind == "worker")][0].worktree_path')
 pr_json="$(gh pr view "$pr" --json state,headRefOid,headRefName)"
 state="$(jq -r .state <<<"$pr_json")"
 head="$(jq -r .headRefOid <<<"$pr_json")"
+head_branch="$(jq -r .headRefName <<<"$pr_json")"
 if [ "$state" != "MERGED" ]; then
   [ "$state" = "CLOSED" ] && [ "$allow_closed" = 1 ] || refuse "PR is $state"
 fi
@@ -38,19 +39,26 @@ branch="$(git -C "$path" branch --show-current)"
 default="$(git -C "$primary" symbolic-ref --short refs/remotes/origin/HEAD)"
 default="${default#origin/}"
 [ "$branch" != "$default" ] || refuse "branch $branch is the default branch"
-[ "$(git -C "$path" rev-parse HEAD)" = "$head" ] || refuse "HEAD is not the PR head"
+[ "$branch" = "$head_branch" ] || refuse "branch $branch is not the PR head branch $head_branch"
+if [ "$(git -C "$path" rev-parse HEAD)" != "$head" ]; then
+  git -C "$path" fetch -q origin "$head" 2>/dev/null || refuse "HEAD is not the PR head"
+  [ -z "$(git -C "$path" cherry "$head" HEAD | grep "^+" || true)" ] || refuse "HEAD is not the PR head"
+fi
+shown="$(orca worktree show --worktree "identity:$identity" --json | jq -r ".result.worktree.path // empty")"
+[ -n "$shown" ] && [ "$(cd "$shown" 2>/dev/null && pwd -P)" = "$(cd "$path" && pwd -P)" ] || refuse "identity $identity is not $path"
 
-db="$primary/scripts/worktree-db-cleanup.sh"
+db=""
+[ "$(fm_get "$spec" .repo)" != omsx ] || db="$primary/scripts/worktree-db-cleanup.sh"
 objtask="$(fm_get "$spec" '.objective')/$(fm_get "$spec" '.task')"
 if [ "$apply" = 0 ]; then
   echo "dry run for $objtask:"
-  if [ -x "$db" ]; then echo "  $db $path --apply"; fi
+  if [ -n "$db" ] && [ -x "$db" ]; then echo "  $db $path --apply"; fi
   echo "  orca worktree rm --worktree identity:$identity"
   echo "  delete branch $branch locally and on origin"
   exit 0
 fi
 
-if [ -x "$db" ]; then (cd "$primary" && "$db" "$path" --apply); fi
+if [ -n "$db" ] && [ -x "$db" ]; then (cd "$primary" && "$db" "$path" --apply); fi
 orca worktree rm --worktree "identity:$identity" --json >/dev/null
 if git -C "$primary" show-ref --verify --quiet "refs/heads/$branch"; then
   git -C "$primary" branch -D "$branch" >/dev/null

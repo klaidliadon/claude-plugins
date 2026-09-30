@@ -27,7 +27,7 @@ Never keep fleet state only in this conversation. After every Orca call, write w
 
 ## Starting a round
 
-Every Orca task is titled `<objective>/<task> round <N>` (the lander uses `land`). Before any `worker-start`, run `orca orchestration task-list --run <run> --json` and look for that title. If it exists, adopt its ids and do not start another. That lookup is what stops a `/clear` mid-dispatch from creating a duplicate worker. If a `worker-start` call itself returned an error after sending, retry it once with `--retry-request <.result.mutation.requestId>` only if you have that id.
+Every Orca task is titled `<objective>/<task> round <N>` (the lander uses `land`). Before any `worker-start`, run `orca orchestration task-list --run <run> --json` and look for that title. If it exists, adopt its ids and do not start another. That lookup is what stops a `/clear` mid-dispatch from creating a duplicate worker. When you adopt a task this way, rebuild its `orca:` entry: `terminal` is the task's `assignee_handle`; while it runs, `orca orchestration worker-show --dispatch` on the active dispatch gives the dispatch id; `orca worktree show --worktree name:<worktree> --json` gives `worktree_path` and `worktree_identity`. If any of these cannot be recovered, stop and tell the user rather than guess. If a `worker-start` call itself returned an error after sending, retry it once with `--retry-request <.result.mutation.requestId>` only if you have that id.
 
 After a start, record in the spec's `orca:` list:
 
@@ -45,6 +45,10 @@ Later rounds copy `worktree_path` and `worktree_identity` from round 1.
 
 The task spec you pass with `--spec` is the spec body followed by `templates/worker-contract.md`, with `{{TASK_DIR}}`, `{{ROUND}}` and `{{ROUND_INPUT}}` filled in.
 
+## Inbox rule
+
+A consuming `orca orchestration check --run <run> --json` returns the oldest unacknowledged batch, and `--ack <deliveryId>` acknowledges all of it. Before any ack, handle every message in the batch: answer each question (then append its message id to `<objective>/answered`), and record each `worker_done` against its task. Never ack a batch holding a question you have not answered. `fleet-status` counts a question as open until its id is in `answered`.
+
 ## Actions by NEXT
 
 | NEXT | Action |
@@ -54,18 +58,19 @@ The task spec you pass with `--spec` is the spec body followed by `templates/wor
 | `blocked on <tasks> merge` | Nothing |
 | `dispatch round 1` | `orca orchestration worker-start --run <run> --repo name:<repo> --worktree new-top-level --name <worktree> --base-branch <base> --agent <agent> --task-title "<objective>/<task> round 1" --spec "<spec + contract>" --json`, then record it |
 | `wait worker`, `wait CI`, `wait lander` | Nothing |
-| `answer question` | `orca orchestration check --run <run> --json` to read it. Answer from the spec and sibling specs. Ask the user first if the answer changes a contract or no spec covers it. `orca orchestration reply --run <run> --id <msg> --body "<answer>" --json`. Append contract decisions to `<objective>/decisions.md`. Ack the delivery with `check --run <run> --ack <deliveryId>` |
+| `answer question` | `orca orchestration check --run <run> --json` to read it. Answer from the spec and sibling specs. Ask the user first if the answer changes a contract or no spec covers it. `orca orchestration reply --run <run> --id <msg> --body "<answer>" --json`. Append its message id to `<objective>/answered` and contract decisions to `<objective>/decisions.md`. Apply the inbox rule before acking |
 | `run reviews round <N>` | Ack the round's `worker_done` delivery. Set `pr` from the PR URL if unset. Do not release the worker. Pick reviewers: always `adversarial` and `tests`; add `security` and `architecture` when `gh pr diff <pr> --name-only` matches the design's path table (below). Write the list to the round's `reviewers`. Run the Claude reviewers as parallel subagents and fill `prompts/adversarial-review.md` for `codex exec`, each writing `review-<N>-<name>.md` in the task directory. Read only their one-line returns |
 | `start fix round <N>` | `orca orchestration worker-start --run <run> --terminal <previous round's terminal> --worktree identity:<identity> --task-title "<objective>/<task> round <N>" --spec "<contract with the review file paths as ROUND_INPUT>" --json`, then record it |
 | `start fix round <N> (fresh agent)` | `orca orchestration worker-release --dispatch <previous dispatch> --json`, then the same start with `--agent <agent>` instead of `--terminal`, and the spec body before the contract |
 | `start fix round <N> with CI log` | `gh run view <failing run> --log-failed > <task dir>/ci-<N>.log`, then as `start fix round <N>` with that path as ROUND_INPUT |
+| `start fix round <N> with CI log (fresh agent)` | Save the log as above, then as `start fix round <N> (fresh agent)` with that path as ROUND_INPUT. The previous terminal is already released, so never pass `--terminal` |
 | `escalate: 3 rounds not clean` | Tell the user, with the findings paths. No new round |
 | `release worker` | `orca orchestration worker-release --dispatch <last dispatch> --json`, then set `released: true` on that round |
 | `needs human approval` | Tell the user once that the PR is ready for approval |
 | `start lander` | `orca orchestration worker-start --run <run> --worktree identity:<identity> --agent claude --task-title "<objective>/<task> land" --spec "Run the land-pr skill on <pr>. Never force-push; rebase only with a /rebase comment. Send worker_done when merged or blocked." --json`; record it with `kind: lander` |
 | `propose cleanup` | Ack any pending lander `worker_done` for this task and `worker-release` the lander dispatch, so the Run inbox does not stall. Then show the output of `fleet-cleanup.sh <spec>` and ask. On yes, run it with `--apply` |
 | `closed unmerged: your call` | Ask. On yes, `fleet-cleanup.sh --apply --allow-closed <spec>` |
-| anything ending in `inspect` | Show the user `orca orchestration worker-show --dispatch <id>` and `worker-read` output. Never stop, retry or release without their answer |
+| anything ending in `inspect` | Record and ack any `worker_done` for this task under the inbox rule, so the Run inbox keeps moving. Show the user `orca orchestration worker-show --dispatch <id>` and `worker-read` output. Never stop, retry or release without their answer |
 
 ## Reviewer path triggers (omsx)
 

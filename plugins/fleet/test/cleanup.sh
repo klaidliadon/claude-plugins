@@ -16,7 +16,9 @@ setup() {
   printf '#!/usr/bin/env bash\necho "$@" > "%s/db-cleanup-called"\n' "$T" >"$T/repo/scripts/worktree-db-cleanup.sh"
   chmod +x "$T/repo/scripts/worktree-db-cleanup.sh"
   git -C "$T/repo" worktree add -q -b feat "$T/wt" origin/main 2>/dev/null
-  git -C "$T/wt" commit -q --allow-empty -m work
+  echo work >"$T/wt/work.txt"
+  git -C "$T/wt" add work.txt
+  git -C "$T/wt" commit -q -m work
   git -C "$T/wt" push -q origin feat 2>/dev/null
   export STUB_PRIMARY="$T/repo" STUB_WT_PATH="$T/wt"
   SPEC="$FLEET_HOME/obj/1-task/spec.md"
@@ -25,6 +27,7 @@ setup() {
 ---
 objective: obj
 task: 1-task
+repo: omsx
 pr: https://github.com/o/r/pull/7
 orca:
   - round: 1
@@ -55,7 +58,7 @@ assert_eq "$RC" 1; assert_contains "$OUT" "refuse: PR is CLOSED"
 setup; touch "$T/wt/dirty"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: worktree is dirty"
 
-setup; git -C "$T/wt" commit -q --allow-empty -m unpushed; run_cleanup --apply "$SPEC"
+setup; echo more >>"$T/wt/work.txt"; git -C "$T/wt" commit -q -am unpushed; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: HEAD is not the PR head"
 
 setup; yq --front-matter=process -i ".orca[0].worktree_path = \"$T/repo\"" "$SPEC"; run_cleanup --apply "$SPEC"
@@ -81,5 +84,25 @@ assert_contains "$(cat "$FLEET_HOME/ledger.md")" "cleaned obj/1-task"
 
 setup; pr_json CLOSED "$(git -C "$T/wt" rev-parse HEAD)"; run_cleanup --apply --allow-closed "$SPEC"
 assert_eq "$RC" 0
+
+setup; STUB_WT_SHOW_PATH="/elsewhere" run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: identity wt-id is not $T/wt"
+
+setup; printf '{"state":"MERGED","headRefOid":"%s","headRefName":"other"}' "$(git -C "$T/wt" rev-parse HEAD)" >"$STUB_GH_PR"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: branch feat is not the PR head branch other"
+
+setup
+git clone -q "$T/origin.git" "$T/other" 2>/dev/null
+git -C "$T/other" checkout -q main
+git -C "$T/other" commit -q --allow-empty -m advance
+git -C "$T/other" push -q origin main 2>/dev/null
+git -C "$T/other" checkout -q -b rebased
+git -C "$T/other" cherry-pick "$(git -C "$T/wt" rev-parse HEAD)" >/dev/null 2>&1
+git -C "$T/other" push -q -f origin rebased:feat 2>/dev/null
+pr_json MERGED "$(git -C "$T/other" rev-parse HEAD)"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_contains "$OUT" "cleaned obj/1-task"
+
+setup; yq --front-matter=process -i '.repo = "devops"' "$SPEC"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
 
 finish_tests cleanup

@@ -42,9 +42,19 @@ out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "🟡2 🟢1"
 assert_contains "$out" "#7"
 
-STUB_ORCA_CHECK="$FX/orca/check-peek-question.json" out="$("$DIR/bin/fleet-status")"
+STUB_ORCA_CHECK="$FX/orca/check-all.json" out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "1 ask"
 assert_contains "$out" "answer question"
+echo msg_0f4f0d8bb6eb >"$FLEET_HOME/obj/answered"
+STUB_ORCA_CHECK="$FX/orca/check-all.json" out="$("$DIR/bin/fleet-status")"
+assert_not_contains "$out" "ask"
+
+for fx in pr-status-failure pr-cancelled; do
+  STUB_GH_PR="$FX/gh/$fx.json" out="$("$DIR/bin/fleet-status")"
+  assert_contains "$out" "❌"
+done
+STUB_GH_PR="$FX/gh/pr-status-pending.json" out="$("$DIR/bin/fleet-status")"
+assert_contains "$out" "⏳"
 
 STUB_ORCA_FAIL=1 "$DIR/bin/fleet-status" >/dev/null 2>&1
 assert_eq "$?" 1
