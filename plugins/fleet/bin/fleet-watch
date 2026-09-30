@@ -19,8 +19,7 @@ poll() {
     return 0
   fi
   rm -f "$state.failed"
-  now="$(printf '%s\n' "$now" | sed '/^$/d')"
-  awk -F'\t' 'FILENAME == ARGV[1] { old[$1 "/" $2] = $3 "\t" $4; next }
+  awk -F'\t' 'NF == 0 { next } FILENAME == ARGV[1] { old[$1 "/" $2] = $3 "\t" $4; next }
     { k = $1 "/" $2; seen[k] = 1; if (old[k] != $3 "\t" $4) print k ": " $4 }
     END { for (k in old) if (!(k in seen)) print k ": gone"; fflush() }' "$state" <(printf '%s\n' "$now")
   printf '%s\n' "$now" >"$state"
