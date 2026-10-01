@@ -1,6 +1,8 @@
 {
   "name": "fleet",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One manager session runs spec-gated Orca workers, one per PR, with independent review and confirmed cleanup.",
-  "author": { "name": "klaidliadon" }
+  "author": {
+    "name": "klaidliadon"
+  }
 }

@@ -8,5 +8,15 @@ case "$1 $2" in
     ;;
   "worktree show") printf '{"ok":true,"result":{"worktree":{"path":"%s"}}}' "${STUB_WT_SHOW_PATH:-$STUB_WT_PATH}" ;;
   "orchestration task-list") cat "$STUB_ORCA_TASKS" ;;
-  "orchestration check") cat "$STUB_ORCA_CHECK" ;;
+  "orchestration check")
+    if [ -n "${STUB_ORCA_FENCED_RUN:-}" ] && [ "$4" = "$STUB_ORCA_FENCED_RUN" ]; then
+      cat "$STUB_ORCA_FENCED"
+      exit "${STUB_ORCA_FENCED_EXIT:-0}"
+    fi
+    cat "$STUB_ORCA_CHECK"
+    ;;
+  "orchestration worker-show")
+    [ -n "${STUB_ORCA_WORKER_SHOW:-}" ] || exit 1
+    cat "$STUB_ORCA_WORKER_SHOW"
+    ;;
 esac

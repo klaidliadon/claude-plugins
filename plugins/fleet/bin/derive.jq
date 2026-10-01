@@ -14,10 +14,14 @@ def review_cell($r):
        | if length == 0 then "clean" else join(" ") end
   end;
 def stale($r): $r.done_at != null and (.now - $r.done_at) > 86400;
+def stalled($r):
+  .stall_after != null and $r.last_output_at != null and $r.agent_wait != true
+  and (.now - $r.last_output_at) > .stall_after;
 
 . as $t
 | (workers | last) as $w
-| ([.rounds[]? | select(.kind == "lander")] | last) as $l
+| ([.rounds[]? | select(.kind == "lander")] | last | if .stopped // false then null else . end) as $l
+| (if .pr == null then "dispatched" elif $w.round == 1 then "pr-open" else "fixing" end) as $working
 | (if $w == null then null
    elif $w.status == "completed" then $w
    else (workers | map(select(.round == $w.round - 1)) | last) end) as $shown
@@ -28,12 +32,13 @@ def stale($r): $r.done_at != null and (.now - $r.done_at) > 86400;
    elif .pr.state == "MERGED" then {state: "merged", next: "propose cleanup"}
    elif .pr.state == "CLOSED" then {state: "closed", next: "closed unmerged: your call"}
    elif $l != null then
-     (if $l.status == "running" then {state: "landing", next: "wait lander"}
+     (if $l.status == "running" then {state: "landing", next: (if stalled($l) then "lander stalled: inspect" else "wait lander" end)}
       else {state: "landing", next: "lander \($l.status): inspect"} end)
    elif $w == null then {state: "approved", next: "dispatch round 1"}
+   elif $w.stopped // false then {state: $working, next: "restart round \($w.round) (fresh agent)"}
    elif $w.status == "failed" then {state: "dispatched", next: "round \($w.round) failed: inspect"}
    elif $w.status == "running" then
-     {state: (if .pr == null then "dispatched" elif $w.round == 1 then "pr-open" else "fixing" end), next: "wait worker"}
+     {state: $working, next: (if stalled($w) then "worker stalled: inspect" else "wait worker" end)}
    elif $w.status != "completed" then {state: "dispatched", next: "worker \($w.status): inspect"}
    elif .pr == null then {state: "dispatched", next: "worker done without PR: inspect"}
    elif (reviews_done($w) | not) then {state: "in-review", next: "run reviews round \($w.round)"}
@@ -53,6 +58,7 @@ def stale($r): $r.done_at != null and (.now - $r.done_at) > 86400;
     state: $d.state,
     ci: ({success: "✅", failure: "❌", pending: "⏳"}[$t.pr.ci // "none"] // "-"),
     review: review_cell($shown),
-    inbox: (if $t.asks > 0 then "\($t.asks) ask" else "-" end),
-    next: (if $t.asks > 0 then "answer question" else $d.next end)
+    inbox: (if $t.fenced // false then "fenced" elif $t.asks > 0 then "\($t.asks) ask" else "-" end),
+    next: (if $t.fenced // false then "rebind: orca orchestration run-use --id \($t.run)"
+           elif $t.asks > 0 then "answer question" else $d.next end)
   }

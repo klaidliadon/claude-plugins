@@ -8,7 +8,7 @@ setup() {
   export FLEET_HOME="$T/fleet" STUB_LOG="$T/log" STUB_GH_PR="$T/pr.json"
   git init -q --bare "$T/origin.git"
   git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
-  git -C "$T/repo" commit -q --allow-empty -m init
+  git -C "$T/repo" -c commit.gpgsign=false commit -q --allow-empty -m init
   git -C "$T/repo" push -q origin HEAD:main
   git -C "$T/repo" remote set-head origin main 2>/dev/null ||
     git -C "$T/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
@@ -18,7 +18,7 @@ setup() {
   git -C "$T/repo" worktree add -q -b feat "$T/wt" origin/main 2>/dev/null
   echo work >"$T/wt/work.txt"
   git -C "$T/wt" add work.txt
-  git -C "$T/wt" commit -q -m work
+  git -C "$T/wt" -c commit.gpgsign=false commit -q -m work
   git -C "$T/wt" push -q origin feat 2>/dev/null
   export STUB_PRIMARY="$T/repo" STUB_WT_PATH="$T/wt"
   SPEC="$FLEET_HOME/obj/1-task/spec.md"
@@ -58,7 +58,7 @@ assert_eq "$RC" 1; assert_contains "$OUT" "refuse: PR is CLOSED"
 setup; touch "$T/wt/dirty"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: worktree is dirty"
 
-setup; echo more >>"$T/wt/work.txt"; git -C "$T/wt" commit -q -am unpushed; run_cleanup --apply "$SPEC"
+setup; echo more >>"$T/wt/work.txt"; git -C "$T/wt" -c commit.gpgsign=false commit -q -am unpushed; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: HEAD is not the PR head"
 
 setup; yq --front-matter=process -i ".orca[0].worktree_path = \"$T/repo\"" "$SPEC"; run_cleanup --apply "$SPEC"
@@ -94,7 +94,7 @@ assert_eq "$RC" 1; assert_contains "$OUT" "refuse: branch feat is not the PR hea
 setup
 git clone -q "$T/origin.git" "$T/other" 2>/dev/null
 git -C "$T/other" checkout -q main
-git -C "$T/other" commit -q --allow-empty -m advance
+git -C "$T/other" -c commit.gpgsign=false commit -q --allow-empty -m advance
 git -C "$T/other" push -q origin main 2>/dev/null
 git -C "$T/other" checkout -q -b rebased
 git -C "$T/other" cherry-pick "$(git -C "$T/wt" rev-parse HEAD)" >/dev/null 2>&1

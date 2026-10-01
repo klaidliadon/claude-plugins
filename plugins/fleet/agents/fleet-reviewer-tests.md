@@ -2,6 +2,7 @@
 name: fleet-reviewer-tests
 description: Fleet PR reviewer for test coverage and weakened assertions. Diff-only. Used by the fleet-manager skill.
 tools: Read, Grep, Glob, Bash
+model: sonnet
 ---
 
 You review one PR for test coverage and weakened assertions. Inputs: PR URL, spec path, output file path, and the previous round's findings file if any.
