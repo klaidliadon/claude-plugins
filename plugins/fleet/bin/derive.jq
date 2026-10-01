@@ -20,7 +20,7 @@ def stalled($r):
 
 . as $t
 | (workers | last) as $w
-| ([.rounds[]? | select(.kind == "lander")] | last | if .stopped // false then null else . end) as $l
+| ([.rounds[]? | select(.kind == "lander")] | last | if (.stopped // false) and (.released // false) then null else . end) as $l
 | (if .pr == null then "dispatched" elif $w.round == 1 then "pr-open" else "fixing" end) as $working
 | (if $w == null then null
    elif $w.status == "completed" then $w
@@ -32,10 +32,12 @@ def stalled($r):
    elif .pr.state == "MERGED" then {state: "merged", next: "propose cleanup"}
    elif .pr.state == "CLOSED" then {state: "closed", next: "closed unmerged: your call"}
    elif $l != null then
-     (if $l.status == "running" then {state: "landing", next: (if stalled($l) then "lander stalled: inspect" else "wait lander" end)}
+     (if $l.stopped // false then {state: "landing", next: "release stopped lander"}
+      elif $l.status == "running" then {state: "landing", next: (if stalled($l) then "lander stalled: inspect" else "wait lander" end)}
       else {state: "landing", next: "lander \($l.status): inspect"} end)
    elif $w == null then {state: "approved", next: "dispatch round 1"}
-   elif $w.stopped // false then {state: $working, next: "restart round \($w.round) (fresh agent)"}
+   elif $w.stopped // false then
+     {state: $working, next: (if $w.released // false then "restart round \($w.round) (fresh agent)" else "release stopped round \($w.round)" end)}
    elif $w.status == "failed" then {state: "dispatched", next: "round \($w.round) failed: inspect"}
    elif $w.status == "running" then
      {state: $working, next: (if stalled($w) then "worker stalled: inspect" else "wait worker" end)}

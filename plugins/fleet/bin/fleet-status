@@ -76,14 +76,13 @@ orca_asks() {
     '[.messages[] | select(.type == "question" and (.id as $i | $answered | index($i) | not)) | .from_handle | sub("^dispatch:"; "")]' <<<"$res"
 }
 
-# worker_activity never fails: a broken worker-show leaves both fields null.
+# worker_activity never fails: a broken worker-show, or one missing the output time or the observation, leaves both fields null.
 worker_activity() {
   local out a none='{"last_output_at":null,"agent_wait":null}'
   out="$(orca orchestration worker-show --dispatch "$1" --json 2>/dev/null)" || true
-  a="$(jq -c 'if .ok == true then .result else {} end | {
-    last_output_at: (.terminal.lastOutputAt | if type == "number" then . / 1000 | floor else null end),
-    agent_wait: (if (.observation | type) == "object" then .observation.agentWait != null else null end)
-  }' <<<"$out" 2>/dev/null)" || a=""
+  a="$(jq -c 'if .ok == true then .result else {} end
+    | select((.terminal.lastOutputAt | type) == "number" and (.observation | type) == "object")
+    | {last_output_at: (.terminal.lastOutputAt / 1000 | floor), agent_wait: (.observation.agentWait != null)}' <<<"$out" 2>/dev/null)" || a=""
   printf '%s' "${a:-$none}"
 }
 
@@ -119,7 +118,7 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
   rows+=("$(jq -c -n \
     --argjson fm "$fm" --argjson st "$statuses" --argjson asks "$asks" \
     --argjson activity "$activity" --argjson fenced "$fenced" --arg run "$run" \
-    --argjson stall_after "$((stall_min * 60))" \
+    --argjson stall_after "$((10#$stall_min * 60))" \
     --argjson reviews "$(reviews_json "$dir")" \
     --argjson pr "$(pr_json "$(fm_get "$spec" '.pr')")" \
     --argjson unmerged "$unmerged" --argjson reviewed "$reviewed" \

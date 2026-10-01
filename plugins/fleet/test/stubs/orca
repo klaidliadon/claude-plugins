@@ -7,7 +7,13 @@ case "$1 $2" in
     echo '{"ok":true}'
     ;;
   "worktree show") printf '{"ok":true,"result":{"worktree":{"path":"%s"}}}' "${STUB_WT_SHOW_PATH:-$STUB_WT_PATH}" ;;
-  "orchestration task-list") cat "$STUB_ORCA_TASKS" ;;
+  "orchestration task-list")
+    if [ "${STUB_ORCA_FENCE_TASKS:-}" = 1 ] && [ "$4" = "${STUB_ORCA_FENCED_RUN:-}" ]; then
+      cat "$STUB_ORCA_FENCED"
+      exit "${STUB_ORCA_FENCED_EXIT:-0}"
+    fi
+    cat "$STUB_ORCA_TASKS"
+    ;;
   "orchestration check")
     if [ -n "${STUB_ORCA_FENCED_RUN:-}" ] && [ "$4" = "$STUB_ORCA_FENCED_RUN" ]; then
       cat "$STUB_ORCA_FENCED"

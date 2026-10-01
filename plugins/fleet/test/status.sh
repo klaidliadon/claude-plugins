@@ -77,7 +77,11 @@ out="$(STUB_ORCA_WORKER_SHOW="$(shown "$(ago 120)")" "$DIR/bin/fleet-status" --t
 assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
 out="$(STUB_ORCA_WORKER_SHOW="$(shown "$(ago 120)")" FLEET_STALL_MIN=1 "$DIR/bin/fleet-status" --tsv)"
 assert_contains "$out" $'obj\t1-api\tpr-open\tworker stalled: inspect'
-for bad in 0 abc -5 1.5; do
+out="$(STUB_ORCA_WORKER_SHOW="$(shown "$(ago 120)")" FLEET_STALL_MIN=08 "$DIR/bin/fleet-status" --tsv 2>"$T/err")"
+assert_eq "$?" 0
+assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
+assert_eq "$(cat "$T/err")" ""
+for bad in 0 00 abc -5 1.5; do
   FLEET_STALL_MIN="$bad" "$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
   assert_eq "$?" 1
   assert_eq "$(cat "$T/err")" "fleet-status: FLEET_STALL_MIN must be a positive integer"
@@ -89,6 +93,20 @@ assert_eq "$(cat "$T/err")" ""
 jq 'del(.result.terminal.lastOutputAt)' "$FX/orca/worker-show-stale.json" >"$T/no-output.json"
 out="$(STUB_ORCA_WORKER_SHOW="$T/no-output.json" "$DIR/bin/fleet-status" --tsv)"
 assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
+for variant in \
+  '.result.observation.agentWait = {"kind": "permission_prompt"}' \
+  'del(.result.observation)' \
+  '.result.terminal.lastOutputAt = "1790798400000"' \
+  '{id, ok: false, error: {code: "dispatch_not_found", message: "no such dispatch"}}'; do
+  jq "$variant" "$FX/orca/worker-show-stale.json" >"$T/variant.json"
+  out="$(STUB_ORCA_WORKER_SHOW="$T/variant.json" "$DIR/bin/fleet-status" --tsv 2>"$T/err")"
+  assert_eq "$?" 0
+  assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
+  assert_eq "$(cat "$T/err")" ""
+done
+jq 'del(.result.observation.agentWait)' "$FX/orca/worker-show-stale.json" >"$T/no-wait-key.json"
+out="$(STUB_ORCA_WORKER_SHOW="$T/no-wait-key.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tpr-open\tworker stalled: inspect'
 export STUB_ORCA_TASKS="$FX/orca/task-list-completed.json"
 
 mkdir -p "$FLEET_HOME/obj2/1-a" "$FLEET_HOME/obj2/2-b"
@@ -105,6 +123,11 @@ for code in 0 1; do
   assert_contains "$out" $'obj2\t2-b\tapproved\trebind: orca orchestration run-use --id run_fenced0000'
   assert_eq "$(cat "$T/err")" ""
 done
+out="$(STUB_ORCA_FENCE_TASKS=1 "$DIR/bin/fleet-status" --tsv 2>"$T/err")"
+assert_eq "$?" 0
+assert_contains "$out" $'obj2\t1-a\tapproved\trebind: orca orchestration run-use --id run_fenced0000'
+assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2'
+assert_eq "$(cat "$T/err")" ""
 out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "fenced"
 unset STUB_ORCA_FENCED_RUN

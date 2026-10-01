@@ -647,7 +647,8 @@
           "status": "unknown",
           "done_at": null,
           "reviewers": [],
-          "stopped": true
+          "stopped": true,
+          "released": true
         }
       ],
       "pr": null
@@ -713,7 +714,8 @@
           "status": "unknown",
           "done_at": null,
           "reviewers": [],
-          "stopped": true
+          "stopped": true,
+          "released": true
         }
       ],
       "pr": {
@@ -737,6 +739,55 @@
     "want": {
       "inbox": "fenced",
       "next": "rebind: orca orchestration run-use --id run_17c08028b992"
+    }
+  },
+  {
+    "name": "stopped-round-unreleased",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "release stopped round 1"
+    }
+  },
+  {
+    "name": "stopped-lander-unreleased",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true
+        }
+      ]
+    },
+    "want": {
+      "state": "landing",
+      "next": "release stopped lander"
     }
   }
 ]

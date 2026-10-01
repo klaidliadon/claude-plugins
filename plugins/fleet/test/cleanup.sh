@@ -97,7 +97,7 @@ git -C "$T/other" checkout -q main
 git -C "$T/other" -c commit.gpgsign=false commit -q --allow-empty -m advance
 git -C "$T/other" push -q origin main 2>/dev/null
 git -C "$T/other" checkout -q -b rebased
-git -C "$T/other" cherry-pick "$(git -C "$T/wt" rev-parse HEAD)" >/dev/null 2>&1
+git -C "$T/other" -c commit.gpgsign=false cherry-pick "$(git -C "$T/wt" rev-parse HEAD)" >/dev/null 2>&1
 git -C "$T/other" push -q -f origin rebased:feat 2>/dev/null
 pr_json MERGED "$(git -C "$T/other" rev-parse HEAD)"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 0; assert_contains "$OUT" "cleaned obj/1-task"
