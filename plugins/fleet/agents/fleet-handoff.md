@@ -13,6 +13,7 @@ Input from the manager: the source (issue URL, Slack thread text, or free text),
 2. Read the code the change touches. Load the repo's `AGENTS.md` and name the repo skills that apply.
 3. Split into one task per PR. Tasks that depend on each other get `depends_on`. Every task in a multi-task objective gets an "Out of scope" line naming its siblings.
 4. For each task, copy `templates/spec.md` from the fleet plugin to `<dir>/<task>/spec.md` and fill it. Leave out `approved_at`, `pr` and `orca`; the manager writes them.
-5. "Done when" items must be commands or checkable facts. If you cannot write one, put the question in "Open questions" instead of guessing.
+5. Set `models` only when a task needs more reasoning than the default, such as a design decision across layers: `architecture: opus` for its reviewer, and `worker: <Orca --model id>` with `worker_effort: high` for its worker. Say why in "Open questions" so the owner can veto it at the go.
+6. "Done when" items must be commands or checkable facts. If you cannot write one, put the question in "Open questions" instead of guessing.
 
 Return only the list of spec paths, one per line.
