@@ -1,10 +1,10 @@
 {
-  "id": "cc604779-513b-4814-951b-cda1ba99aa01",
+  "id": "00000000-0000-0000-0000-00000000001c",
   "ok": true,
   "result": {
-    "runId": "run_17c08028b992",
-    "taskId": "task_9819fc646159",
-    "dispatchId": "ctx_b8a0ab53d622",
+    "runId": "run_000000000001",
+    "taskId": "task_000000000006",
+    "dispatchId": "ctx_000000000007",
     "state": "ready",
     "stage": "input_accepted",
     "turnStart": "observed",
@@ -39,15 +39,15 @@
       {
         "kind": "worktree",
         "action": "created_top_level",
-        "id": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike"
+        "id": "00000000-0000-0000-0000-000000000012::/home/user/orca/workspaces/claude-plugins/fleet-spike"
       },
       {
         "kind": "terminal",
         "role": "agent",
         "action": "created",
-        "id": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
-        "tabId": "f20e3562-2342-459c-9753-16a7fc4c9c45",
-        "leafId": "c21be3b4-e56e-4970-8e76-8eb92339975d"
+        "id": "term_00000000-0000-0000-0000-000000000100",
+        "tabId": "00000000-0000-0000-0000-000000000017",
+        "leafId": "00000000-0000-0000-0000-000000000018"
       },
       {
         "kind": "setup",
@@ -62,19 +62,19 @@
       {
         "kind": "dispatch_input",
         "role": "agent",
-        "id": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+        "id": "term_00000000-0000-0000-0000-000000000100",
         "state": "accepted"
       }
     ],
     "prompt": {
-      "requestId": "8029614d-1df2-408e-9217-5a02dacd0734",
+      "requestId": "00000000-0000-0000-0000-000000000019",
       "stages": [
         "input_accepted",
         "turn_started"
       ],
       "provider": "claude",
       "observation": "supported",
-      "processIncarnation": "2a5687b7-e04f-4472-88e9-ce540c09d340",
+      "processIncarnation": "00000000-0000-0000-0000-000000000013",
       "generation": 66,
       "baselineWorkingSequence": 0,
       "baselineExplicitWorkingStartedAt": null,
@@ -82,11 +82,11 @@
     },
     "residualResources": [],
     "mutation": {
-      "requestId": "8029614d-1df2-408e-9217-5a02dacd0734",
+      "requestId": "00000000-0000-0000-0000-000000000019",
       "replayed": false
     }
   },
   "_meta": {
-    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+    "runtimeId": "00000000-0000-0000-0000-000000000002"
   }
 }

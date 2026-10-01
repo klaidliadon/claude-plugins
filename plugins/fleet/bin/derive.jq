@@ -30,7 +30,7 @@ def stopped($r): ($r.stopped // false) or $r.status == "blocked";
      (if .answer == null then {state: "review", next: "ask review"}
       elif .answer != "yes" then {state: "review", next: "skipped"}
       elif .session == null then {state: "review", next: "start review session"}
-      elif .session.status == "running" then {state: "review", next: "wait review session"}
+      elif .session.status == "running" then {state: "review", next: (if stalled(.session) then "review session stalled: inspect" else "wait review session" end)}
       elif .session.status == "completed" then {state: "review", next: "done"}
       else {state: "review", next: "review session \(.session.status): inspect"} end)
    elif .approved_at == null then

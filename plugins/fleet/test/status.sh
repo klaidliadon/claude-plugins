@@ -10,7 +10,7 @@ export STUB_ORCA_TASKS="$FX/orca/task-list-completed.json" STUB_ORCA_CHECK="$T/c
 echo '{"ok":true,"result":{"messages":[]}}' >"$STUB_ORCA_CHECK"
 TD="$FLEET_HOME/obj/1-api"
 mkdir -p "$TD"
-echo run_17c08028b992 >"$FLEET_HOME/obj/run.id"
+echo run_000000000001 >"$FLEET_HOME/obj/run.id"
 cat >"$TD/spec.md" <<'SPEC'
 ---
 objective: obj
@@ -22,8 +22,8 @@ pr: https://github.com/o/r/pull/7
 orca:
   - round: 1
     kind: worker
-    task_id: task_9819fc646159
-    dispatch_id: ctx_b8a0ab53d622
+    task_id: task_000000000006
+    dispatch_id: ctx_000000000007
     reviewers: [adversarial, tests]
 ---
 body
@@ -45,7 +45,7 @@ assert_contains "$out" "#7"
 STUB_ORCA_CHECK="$FX/orca/check-all.json" out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "1 ask"
 assert_contains "$out" "answer question"
-echo msg_0f4f0d8bb6eb >"$FLEET_HOME/obj/answered"
+echo msg_000000000008 >"$FLEET_HOME/obj/answered"
 STUB_ORCA_CHECK="$FX/orca/check-all.json" out="$("$DIR/bin/fleet-status")"
 assert_not_contains "$out" "ask"
 
@@ -70,7 +70,7 @@ ago() { echo $((($(date +%s) - $1) * 1000)); }
 export STUB_ORCA_TASKS="$FX/orca/task-list-running.json"
 out="$(STUB_ORCA_WORKER_SHOW="$FX/orca/worker-show-stale.json" "$DIR/bin/fleet-status" --tsv)"
 assert_contains "$out" $'obj\t1-api\tpr-open\tworker stalled: inspect'
-assert_contains "$(cat "$STUB_LOG")" "orca orchestration worker-show --dispatch ctx_b8a0ab53d622 --json"
+assert_contains "$(cat "$STUB_LOG")" "orca orchestration worker-show --dispatch ctx_000000000007 --json"
 out="$(STUB_ORCA_WORKER_SHOW="$(shown "$(ago 0)")" "$DIR/bin/fleet-status" --tsv)"
 assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
 out="$(STUB_ORCA_WORKER_SHOW="$(shown "$(ago 120)")" "$DIR/bin/fleet-status" --tsv)"
@@ -139,10 +139,10 @@ assert_contains "$out" "fenced"
 unset STUB_ORCA_FENCED_RUN
 rm -rf "$FLEET_HOME/obj2"
 
-echo '{"id":"1b2c","ok":false,"error":{"code":"run_not_found","message":"Run run_17c08028b992 not found."},"_meta":{}}' >"$T/check-error.json"
+echo '{"id":"1b2c","ok":false,"error":{"code":"run_not_found","message":"Run run_000000000001 not found."},"_meta":{}}' >"$T/check-error.json"
 STUB_ORCA_CHECK="$T/check-error.json" "$DIR/bin/fleet-status" >/dev/null 2>"$T/err"
 assert_eq "$?" 1
-assert_eq "$(cat "$T/err")" "fleet-status: orca run_not_found: Run run_17c08028b992 not found."
+assert_eq "$(cat "$T/err")" "fleet-status: orca run_not_found: Run run_000000000001 not found."
 
 yq --front-matter=process -i '.cleaned_at = "2026-10-02T00:00:00Z"' "$TD/spec.md"
 assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "1-api"
@@ -150,23 +150,24 @@ assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "1-api"
 export STUB_ORCA_CHECK="$T/check-empty.json"
 printf 'review_requests:\n  sources:\n    - slack: "#team"\n      repos: [o/app]\n' >"$FLEET_HOME/config.yaml"
 "$DIR/bin/fleet-review-request" add "#team" https://github.com/o/app/pull/7 alice https://slack.example/p1 2026-10-01T09:00:00Z >/dev/null
-RS="$FLEET_HOME/reviews/app-7/spec.md"
-review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\tapp-7\t'; }
-assert_eq "$(review_next)" $'reviews\tapp-7\treview\task review'
+RS="$FLEET_HOME/reviews/o-app-7/spec.md"
+review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\to-app-7\t'; }
+assert_eq "$(review_next)" $'reviews\to-app-7\treview\task review'
 for a in later no; do
   yq --front-matter=process -i ".answer = \"$a\"" "$RS"
-  assert_eq "$(review_next)" $'reviews\tapp-7\treview\tskipped'
+  assert_eq "$(review_next)" $'reviews\to-app-7\treview\tskipped'
 done
 yq --front-matter=process -i '.answer = "yes"' "$RS"
-assert_eq "$(review_next)" $'reviews\tapp-7\treview\tstart review session'
-echo run_17c08028b992 >"$FLEET_HOME/reviews/run.id"
-yq --front-matter=process -i '.session = {"task_id": "task_9819fc646159", "dispatch_id": "ctx_b8a0ab53d622", "terminal": "term_x", "worktree_path": "/w"}' "$RS"
-assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" review_next)" $'reviews\tapp-7\treview\twait review session'
+assert_eq "$(review_next)" $'reviews\to-app-7\treview\tstart review session'
+echo run_000000000001 >"$FLEET_HOME/reviews/run.id"
+yq --front-matter=process -i '.session = {"task_id": "task_000000000006", "dispatch_id": "ctx_000000000007", "terminal": "term_x", "worktree_path": "/w"}' "$RS"
+assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" review_next)" $'reviews\to-app-7\treview\twait review session'
 out="$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_CHECK="$FX/orca/check-all.json" "$DIR/bin/fleet-status")"
-assert_contains "$(grep app-7 <<<"$out")" "answer question"
-assert_eq "$(review_next)" $'reviews\tapp-7\treview\tdone'
+assert_contains "$(grep o-app-7 <<<"$out")" "answer question"
+assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_WORKER_SHOW="$FX/orca/worker-show-stale.json" review_next)" $'reviews\to-app-7\treview\treview session stalled: inspect'
+assert_eq "$(review_next)" $'reviews\to-app-7\treview\tdone'
 jq '.result.tasks[0].status = "failed"' "$FX/orca/task-list-running.json" >"$T/task-list-failed.json"
-assert_eq "$(STUB_ORCA_TASKS="$T/task-list-failed.json" review_next)" $'reviews\tapp-7\treview\treview session failed: inspect'
+assert_eq "$(STUB_ORCA_TASKS="$T/task-list-failed.json" review_next)" $'reviews\to-app-7\treview\treview session failed: inspect'
 yq --front-matter=process -i '.cleaned_at = "2026-10-02T00:00:00Z"' "$RS"
-assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "app-7"
+assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "o-app-7"
 finish_tests status

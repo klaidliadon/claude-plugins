@@ -6,7 +6,7 @@ Open an Orca terminal in any primary checkout and run `FLEET_MANAGER=1 claude`. 
 
 ## State
 
-`${FLEET_HOME:-~/Workspace/.fleet}` holds `ledger.md` and one directory per objective: `run.id`, `decisions.md`, and one directory per task with `spec.md`, `spec-review.md`, `review-<round>-<reviewer>.md` and `ci-<round>.log`. `config.yaml` (optional) holds the adversarial reviewer choice and the Slack review-request sources; `review-requests.cursor` holds the last Slack ts checked per source; `reviews/<repo>-<n>/spec.md` is one review request, under the `reviews` objective with its own `run.id`.
+`${FLEET_HOME:-~/Workspace/.fleet}` holds `ledger.md` and one directory per objective: `run.id`, `decisions.md`, and one directory per task with `spec.md`, `spec-review.md`, `review-<round>-<reviewer>.md` and `ci-<round>.log`. `config.yaml` (optional) holds the adversarial reviewer choice and the Slack review-request sources; `review-requests.cursor` holds the last Slack ts checked per source; `reviews/<owner>-<repo>-<n>/spec.md` is one review request, under the `reviews` objective with its own `run.id`.
 
 Each repo may commit `.agents/fleet.yaml` with its review skill, reviewer globs, reviewer focus text and worktree cleanup hook. Without it, a PR gets `adversarial` and `tests` only and cleanup runs no hook. Orca holds Runs, Tasks and Dispatches. The spec frontmatter's `orca:` list is the join between them.
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 echo "gh $*" >>"$STUB_LOG"
+[ "${STUB_GH_FAIL:-}" != "$1 $2" ] || exit 1
 case "$1 $2" in
   "pr view") cat "$STUB_GH_PR" ;;
   "pr diff") cat "$STUB_GH_DIFF" ;;

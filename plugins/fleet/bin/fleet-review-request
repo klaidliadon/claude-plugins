@@ -20,7 +20,7 @@ case "${1:-}" in
     [ $# -eq 6 ] || { echo "$usage" >&2; exit 2; }
     src="$2" url="$3"
     [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]] || { echo "fleet-review-request: not a PR URL: $url" >&2; exit 2; }
-    slug="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" repo="${BASH_REMATCH[2]}" task="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+    slug="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" repo="${BASH_REMATCH[2]}" task="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
     dir="$FLEET_HOME/reviews/$task"
     skip() { echo "skip $url: $*"; exit 0; }
     repos="$(src="$src" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")')"
@@ -29,7 +29,6 @@ case "${1:-}" in
       [ -e "$s" ] || continue
       [ "$(fm_get "$s" .pr)" != "$url" ] || skip "already tracked in $s"
     done
-    [ ! -e "$dir" ] || { echo "fleet-review-request: $dir exists for another PR" >&2; exit 1; }
     pr="$(gh pr view "$url" --json state,author,reviews)"
     [ "$(jq -r .state <<<"$pr")" = OPEN ] || skip "PR is $(jq -r .state <<<"$pr")"
     author="$(jq -r .author.login <<<"$pr")"
@@ -39,11 +38,14 @@ case "${1:-}" in
       ! jq -e --arg me "$me" 'any(.reviews[]?; .author.login == $me)' >/dev/null <<<"$pr" || skip "$me already reviewed it"
     fi
     mkdir -p "$dir"
+    tmp="$(mktemp "$dir/.spec.XXXXXX")"
+    trap 'rm -f "$tmp"' EXIT
     url="$url" repo="$repo" task="$task" by="$4" link="$5" at="$6" yq -n '
       .objective = "reviews" | .task = strenv(task) | .kind = "review" | .pr = strenv(url) | .repo = strenv(repo)
       | .requested_by = strenv(by) | .request_link = strenv(link) | .asked_at = strenv(at) | .answer = null
       | .session = {"task_id": null, "dispatch_id": null, "terminal": null, "worktree_path": null}' |
-      { echo ---; cat; echo ---; } >"$dir/spec.md"
+      { echo ---; cat; echo ---; } >"$tmp"
+    mv "$tmp" "$dir/spec.md"
     ledger_append "review-request $url from $4"
     echo "created $dir/spec.md"
     ;;

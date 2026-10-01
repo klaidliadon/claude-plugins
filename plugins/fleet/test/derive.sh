@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/test/testlib.sh"
+SKILL="$DIR/skills/fleet-manager/SKILL.md"
 
 base='{"objective":"obj","task":"1-api","repo":"app","approved_at":"2026-10-01T10:00:00Z","spec_reviewed":true,"deps_unmerged":[],"rounds":[{"round":1,"kind":"worker","status":"completed","done_at":1759312800,"reviewers":["adversarial"],"released":false}],"reviews":{"1":{"adversarial":{"critical":0,"important":1,"suggestion":0}}},"pr":{"number":3697,"state":"OPEN","ci":"success","approved":false},"asks":0,"now":1759316400,"stall_after":900}'
 
@@ -14,5 +15,12 @@ for i in $(seq 0 $((n - 1))); do
     have="$(jq -r ".$k" <<<"$got")"
     [ "$want" = "$have" ] || fail "$name: $k want '$want' got '$have'"
   done
+  raw="$(jq -r .next <<<"$got")"
+  next="$(sed -E 's/round [0-9]+/round <N>/; s/^blocked on .* merge$/blocked on <tasks> merge/; s/--id [^ ]+$/--id <run>/' <<<"$raw")"
+  grep -qF -- "\`$raw\`" "$SKILL" && next="$raw"
+  case "$next" in
+    *inspect) grep -qF '| anything ending in `inspect` |' "$SKILL" || fail "$name: SKILL.md has no inspect row" ;;
+    *) grep -qF -- "\`$next\`" "$SKILL" || fail "$name: SKILL.md has no action row for '$next'" ;;
+  esac
 done
 finish_tests derive

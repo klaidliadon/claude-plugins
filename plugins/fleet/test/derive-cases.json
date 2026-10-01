@@ -734,11 +734,11 @@
     "name": "fenced",
     "input": {
       "fenced": true,
-      "run": "run_17c08028b992"
+      "run": "run_000000000001"
     },
     "want": {
       "inbox": "fenced",
-      "next": "rebind: orca orchestration run-use --id run_17c08028b992"
+      "next": "rebind: orca orchestration run-use --id run_000000000001"
     }
   },
   {
@@ -968,7 +968,8 @@
       }
     },
     "want": {
-      "next": "skipped"
+      "next": "skipped",
+      "state": "review"
     }
   },
   {
@@ -1061,6 +1062,25 @@
     },
     "want": {
       "next": "start fix round 2"
+    }
+  },
+  {
+    "name": "review-stalled",
+    "input": {
+      "kind": "review",
+      "answer": "yes",
+      "rounds": [],
+      "session": {
+        "task_id": "t",
+        "dispatch_id": "d",
+        "status": "running",
+        "last_output_at": 1759300000,
+        "agent_wait": false
+      }
+    },
+    "want": {
+      "state": "review",
+      "next": "review session stalled: inspect"
     }
   }
 ]

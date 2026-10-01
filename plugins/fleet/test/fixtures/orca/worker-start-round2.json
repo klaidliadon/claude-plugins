@@ -1,10 +1,10 @@
 {
-  "id": "58239a2b-e19e-4d93-b3a3-3619f2466dd6",
+  "id": "00000000-0000-0000-0000-00000000001a",
   "ok": true,
   "result": {
-    "runId": "run_17c08028b992",
-    "taskId": "task_221aa7b3c60c",
-    "dispatchId": "ctx_96405c2b0964",
+    "runId": "run_000000000001",
+    "taskId": "task_000000000003",
+    "dispatchId": "ctx_000000000004",
     "state": "ready",
     "stage": "input_accepted",
     "turnStart": "observed",
@@ -39,7 +39,7 @@
       {
         "kind": "worktree",
         "action": "reused",
-        "id": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike"
+        "id": "00000000-0000-0000-0000-000000000012::/home/user/orca/workspaces/claude-plugins/fleet-spike"
       },
       {
         "kind": "setup",
@@ -50,24 +50,24 @@
         "kind": "terminal",
         "role": "agent",
         "action": "reused",
-        "id": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae"
+        "id": "term_00000000-0000-0000-0000-000000000100"
       },
       {
         "kind": "dispatch_input",
         "role": "agent",
-        "id": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+        "id": "term_00000000-0000-0000-0000-000000000100",
         "state": "accepted"
       }
     ],
     "prompt": {
-      "requestId": "c694e3dc-619e-4b7a-9a85-b6bf434af8fe",
+      "requestId": "00000000-0000-0000-0000-00000000001b",
       "stages": [
         "input_accepted",
         "turn_started"
       ],
       "provider": "claude",
       "observation": "supported",
-      "processIncarnation": "2a5687b7-e04f-4472-88e9-ce540c09d340",
+      "processIncarnation": "00000000-0000-0000-0000-000000000013",
       "generation": 66,
       "baselineWorkingSequence": 1,
       "baselineExplicitWorkingStartedAt": null,
@@ -75,11 +75,11 @@
     },
     "residualResources": [],
     "mutation": {
-      "requestId": "c694e3dc-619e-4b7a-9a85-b6bf434af8fe",
+      "requestId": "00000000-0000-0000-0000-00000000001b",
       "replayed": false
     }
   },
   "_meta": {
-    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+    "runtimeId": "00000000-0000-0000-0000-000000000002"
   }
 }

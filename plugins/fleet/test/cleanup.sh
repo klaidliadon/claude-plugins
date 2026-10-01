@@ -115,6 +115,10 @@ assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"; assert_fail test 
 setup; echo 'review_skill: review' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
 
+setup; echo 'cleanup: [unclosed' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cannot read"
+assert_ok test -d "$T/wt"; assert_not_contains "$(cat "$STUB_LOG")" "worktree rm"
+
 setup; echo 'cleanup: scripts/missing.sh' >"$T/repo/.agents/fleet.yaml"; run_cleanup "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cleanup hook scripts/missing.sh is not executable"
 
