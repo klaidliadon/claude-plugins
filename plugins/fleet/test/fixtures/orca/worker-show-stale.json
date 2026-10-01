@@ -1,0 +1,43 @@
+{
+  "id": "2bfbc7f1-660e-4b71-85c3-0dca79a3f677",
+  "ok": true,
+  "result": {
+    "dispatch": {
+      "id": "ctx_b8a0ab53d622",
+      "taskId": "task_9819fc646159",
+      "runId": "run_17c08028b992",
+      "status": "dispatched",
+      "lastHeartbeatAt": null,
+      "dispatchedAt": "2026-09-30 19:57:25",
+      "completedAt": null
+    },
+    "projection": {
+      "id": "ctx_b8a0ab53d622",
+      "role": "worker",
+      "stage": {
+        "worker": "running",
+        "dispatch": "dispatched",
+        "detail": "running",
+        "activity": "unknown"
+      },
+      "liveness": {
+        "verdict": "unverifiable",
+        "reason": "missing_status"
+      }
+    },
+    "terminal": {
+      "handle": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
+      "connected": true,
+      "lastOutputAt": 1790798400000,
+      "agentIdentity": "claude"
+    },
+    "observation": {
+      "status": "running",
+      "exactWorker": true,
+      "agentWait": null
+    }
+  },
+  "_meta": {
+    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+  }
+}

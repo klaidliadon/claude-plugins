@@ -3,6 +3,12 @@ set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
 source "$BIN/lib.sh"
 
+stall_min="${FLEET_STALL_MIN:-15}"
+[[ "$stall_min" =~ ^[0-9]+$ ]] && [ "$stall_min" -gt 0 ] || {
+  echo "fleet-status: FLEET_STALL_MIN must be a positive integer" >&2
+  exit 1
+}
+
 counts_of() {
   local line
   line="$(head -1 "$1")"
@@ -37,18 +43,48 @@ pr_json() {
   }'
 }
 
+# orca_call prints .result; it returns 3 when this terminal is fenced from the Run.
+orca_call() {
+  local out
+  out="$(orca "$@" --json 2>/dev/null)" || true
+  jq -e 'type == "object" and has("ok")' >/dev/null 2>&1 <<<"$out" || {
+    echo "fleet-status: orca unreachable" >&2
+    return 1
+  }
+  [ "$(jq -r '.error.code // ""' <<<"$out")" != consumer_fenced ] || return 3
+  jq -e '.ok == true' >/dev/null <<<"$out" || {
+    jq -r '"fleet-status: orca \(.error.code // "unknown"): \(.error.message // "")"' <<<"$out" >&2
+    return 1
+  }
+  jq -c '.result' <<<"$out"
+}
+
 orca_task_statuses() {
-  orca orchestration task-list --run "$1" --json | jq -ce '[.result.tasks[] | {key: .id, value: {
-    status: ({dispatched: "running", completed: "completed", failed: "failed"}[.status] // "unknown"),
+  local res
+  res="$(orca_call orchestration task-list --run "$1")" || return
+  jq -c '[.tasks[] | {key: .id, value: {
+    status: ({dispatched: "running", completed: "completed", failed: "failed", blocked: "blocked"}[.status] // "unknown"),
     done_at: (if .completed_at then (.completed_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) else null end)
-  }}] | from_entries'
+  }}] | from_entries' <<<"$res"
 }
 
 orca_asks() {
-  local answered="[]"
+  local res answered="[]"
   [ ! -f "$2" ] || answered="$(jq -R . "$2" | jq -cs .)"
-  orca orchestration check --run "$1" --all --json | jq -ce --argjson answered "$answered" \
-    '[.result.messages[] | select(.type == "question" and (.id as $i | $answered | index($i) | not)) | .from_handle | sub("^dispatch:"; "")]'
+  res="$(orca_call orchestration check --run "$1" --all)" || return
+  jq -c --argjson answered "$answered" \
+    '[.messages[] | select(.type == "question" and (.id as $i | $answered | index($i) | not)) | .from_handle | sub("^dispatch:"; "")]' <<<"$res"
+}
+
+# worker_activity never fails: a broken worker-show, or one missing the output time or agentWait, leaves the activity fields null.
+worker_activity() {
+  local out a none='{"last_output_at":null,"agent_wait":null}'
+  out="$(orca orchestration worker-show --dispatch "$1" --json 2>/dev/null)" || true
+  a="$(jq -c 'if .ok == true then .result else {} end
+    | select((.terminal.lastOutputAt | type) == "number" and ((.observation | type) == "object" and (.observation | has("agentWait"))))
+    | {last_output_at: (.terminal.lastOutputAt / 1000 | floor), agent_wait: (.observation.agentWait != null),
+       dispatched_at: (try (.dispatch.dispatchedAt | sub(" "; "T") + "Z" | fromdateiso8601) catch null)}' <<<"$out" 2>/dev/null)" || a=""
+  printf '%s' "${a:-$none}"
 }
 
 rows=()
@@ -58,11 +94,19 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
   dir="$(dirname "$spec")"
   objdir="$(dirname "$dir")"
   run="$(cat "$objdir/run.id" 2>/dev/null || true)"
-  statuses='{}' asks='[]'
+  fm="$(yq -o=json --front-matter=extract '.' "$spec")"
+  statuses='{}' asks='[]' fenced=false rc=0
   if [ -n "$run" ]; then
-    statuses="$(orca_task_statuses "$run")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
-    asks="$(orca_asks "$run" "$objdir/answered")" || { echo "fleet-status: orca unreachable" >&2; exit 1; }
+    statuses="$(orca_task_statuses "$run")" || rc=$?
+    [ "$rc" != 0 ] || asks="$(orca_asks "$run" "$objdir/answered")" || rc=$?
+    [ "$rc" = 0 ] || [ "$rc" = 3 ] || exit 1
+    [ "$rc" = 0 ] || { fenced=true asks='[]'; }
+    [ -n "$statuses" ] || statuses='{}'
   fi
+  activity='{}'
+  for d in $(jq -r --argjson st "$statuses" '(.orca // [])[] | select($st[.task_id].status == "running") | .dispatch_id' <<<"$fm"); do
+    activity="$(jq -c --arg d "$d" --argjson a "$(worker_activity "$d")" '.[$d] = $a' <<<"$activity")"
+  done
   unmerged='[]'
   for dep in $(fm_get "$spec" '.depends_on[]'); do
     dpr="$(fm_get "$objdir/$dep/spec.md" '.pr')"
@@ -73,8 +117,9 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
   reviewed=false
   [ ! -f "$dir/spec-review.md" ] || reviewed=true
   rows+=("$(jq -c -n \
-    --argjson fm "$(yq -o=json --front-matter=extract '.' "$spec")" \
-    --argjson st "$statuses" --argjson asks "$asks" \
+    --argjson fm "$fm" --argjson st "$statuses" --argjson asks "$asks" \
+    --argjson activity "$activity" --argjson fenced "$fenced" --arg run "$run" \
+    --argjson stall_after "$((10#$stall_min * 60))" \
     --argjson reviews "$(reviews_json "$dir")" \
     --argjson pr "$(pr_json "$(fm_get "$spec" '.pr')")" \
     --argjson unmerged "$unmerged" --argjson reviewed "$reviewed" \
@@ -82,10 +127,10 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
       objective: $fm.objective, task: $fm.task, repo: $fm.repo,
       approved_at: ($fm.approved_at // null), spec_reviewed: $reviewed,
       deps_unmerged: $unmerged,
-      rounds: [($fm.orca // [])[] | . + ($st[.task_id] // {status: "unknown", done_at: null})],
+      rounds: [($fm.orca // [])[] | . + ($st[.task_id] // {status: "unknown", done_at: null}) + ($activity[.dispatch_id] // {})],
       reviews: $reviews, pr: $pr,
       asks: ([($fm.orca // [])[].dispatch_id] as $ids | [$asks[] | select(. as $a | $ids | index($a))] | length),
-      now: $now
+      fenced: $fenced, run: $run, now: $now, stall_after: $stall_after
     }' | jq -c -f "$BIN/derive.jq")")
 done
 

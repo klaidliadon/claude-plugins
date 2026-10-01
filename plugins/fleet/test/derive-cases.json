@@ -492,5 +492,429 @@
     "want": {
       "next": "start fix round 2 with CI log (fresh agent)"
     }
+  },
+  {
+    "name": "stalled-worker-round-1",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759315400,
+          "agent_wait": false
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "worker stalled: inspect"
+    }
+  },
+  {
+    "name": "stalled-worker-fix-round",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        },
+        {
+          "round": 2,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759315400,
+          "agent_wait": false
+        }
+      ]
+    },
+    "want": {
+      "state": "fixing",
+      "next": "worker stalled: inspect",
+      "review": "🟡1"
+    }
+  },
+  {
+    "name": "stalled-lander",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759315400,
+          "agent_wait": false
+        }
+      ]
+    },
+    "want": {
+      "state": "landing",
+      "next": "lander stalled: inspect"
+    }
+  },
+  {
+    "name": "silent-agent-wait",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759315400,
+          "agent_wait": true
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "recent-output",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759316340,
+          "agent_wait": false
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "no-output-time",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": null,
+          "agent_wait": null
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "stopped-round-1",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true,
+          "released": true
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "restart round 1 (fresh agent)"
+    }
+  },
+  {
+    "name": "stopped-then-retried",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true
+        },
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": []
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "stopped-lander",
+    "input": {
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true,
+          "released": true
+        }
+      ],
+      "pr": {
+        "number": 1,
+        "state": "OPEN",
+        "ci": "success",
+        "approved": true
+      }
+    },
+    "want": {
+      "state": "ready",
+      "next": "start lander"
+    }
+  },
+  {
+    "name": "fenced",
+    "input": {
+      "fenced": true,
+      "run": "run_17c08028b992"
+    },
+    "want": {
+      "inbox": "fenced",
+      "next": "rebind: orca orchestration run-use --id run_17c08028b992"
+    }
+  },
+  {
+    "name": "stopped-round-unreleased",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "release stopped round 1"
+    }
+  },
+  {
+    "name": "stopped-lander-unreleased",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "unknown",
+          "done_at": null,
+          "reviewers": [],
+          "stopped": true
+        }
+      ]
+    },
+    "want": {
+      "state": "landing",
+      "next": "release stopped lander"
+    }
+  },
+  {
+    "name": "blocked-unrecorded-stop",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "blocked",
+          "done_at": null,
+          "reviewers": []
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "release stopped round 1"
+    }
+  },
+  {
+    "name": "blocked-released",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "blocked",
+          "done_at": null,
+          "reviewers": [],
+          "released": true
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "restart round 1 (fresh agent)"
+    }
+  },
+  {
+    "name": "blocked-lander",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "blocked",
+          "done_at": null,
+          "reviewers": []
+        }
+      ]
+    },
+    "want": {
+      "state": "landing",
+      "next": "release stopped lander"
+    }
+  },
+  {
+    "name": "reused-terminal-fresh-dispatch",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        },
+        {
+          "round": 2,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759300000,
+          "dispatched_at": 1759316300,
+          "agent_wait": false
+        }
+      ]
+    },
+    "want": {
+      "state": "fixing",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "reused-terminal-silent-since-dispatch",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        },
+        {
+          "round": 2,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759300000,
+          "dispatched_at": 1759315000,
+          "agent_wait": false
+        }
+      ]
+    },
+    "want": {
+      "state": "fixing",
+      "next": "worker stalled: inspect"
+    }
   }
 ]
