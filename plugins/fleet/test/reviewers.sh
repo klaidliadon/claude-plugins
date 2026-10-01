@@ -44,13 +44,18 @@ assert_eq "$(reviewers apps/payouts/rpc/deep/x.go)" "adversarial,tests,architect
 assert_eq "$(reviewers apps/top.go)" "adversarial,tests"
 assert_contains "$(cat "$STUB_LOG")" "gh pr diff $PR --name-only"
 
-git clone -q "$T/origin.git" "$T/other" 2>/dev/null
+assert_eq "$(reviewers apps/ledger/rpc.go)" "adversarial,tests,architecture"
+git clone -q --branch main "$T/origin.git" "$T/other" 2>/dev/null
 mkdir -p "$T/other/apps/ledger"
 touch "$T/other/apps/ledger/main.go"
 git -C "$T/other" add apps
 git -C "$T/other" -c commit.gpgsign=false commit -q -m ledger
-git -C "$T/other" push -q origin HEAD:main 2>/dev/null
+stale="$(git -C "$T/repo" rev-parse refs/remotes/origin/main)"
+assert_ok git -C "$T/other" push -q origin HEAD:main
+assert_eq "$(git --git-dir="$T/origin.git" rev-parse main)" "$(git -C "$T/other" rev-parse HEAD)"
+assert_eq "$(git -C "$T/repo" rev-parse refs/remotes/origin/main)" "$stale"
 assert_eq "$(reviewers apps/ledger/rpc.go)" "adversarial,tests"
+assert_eq "$(git -C "$T/repo" rev-parse refs/remotes/origin/main)" "$(git -C "$T/other" rev-parse HEAD)"
 
 out="$(STUB_GH_FAIL="pr view" fleet_reviewers "$T/repo" "$PR" 2>&1)"
 assert_eq "$?" 1; assert_not_contains "$out" "adversarial"
@@ -74,6 +79,13 @@ assert_eq "$(reviewers pkg/pii/model.go)" "adversarial,tests,security"
 assert_eq "$(reviewers pkg/crypto/x.go)" "adversarial,tests,security"
 assert_eq "$(reviewers apps/a/secrets.go)" "adversarial,tests,security"
 assert_eq "$(reviewers pkg/copy/x.go)" "adversarial,tests"
+printf 'reviewers:\n  docs: ["docs/a+b.md", "src/?.go", "lib/(x)|y/*.c"]\n' >"$T/repo/.agents/fleet.yaml"
+assert_eq "$(reviewers docs/a+b.md)" "adversarial,tests,docs"
+assert_eq "$(reviewers docs/aab.md)" "adversarial,tests"
+assert_eq "$(reviewers src/a.go)" "adversarial,tests,docs"
+assert_eq "$(reviewers src/ab.go src/a/b.go)" "adversarial,tests"
+assert_eq "$(reviewers 'lib/(x)|y/z.c')" "adversarial,tests,docs"
+assert_eq "$(reviewers lib/x/z.c)" "adversarial,tests"
 assert_not_contains "$(cat "$STUB_LOG")" "gh pr view"
 out="$(STUB_GH_FAIL="pr diff" fleet_reviewers "$T/repo" "$PR" 2>&1)"
 assert_eq "$?" 1; assert_not_contains "$out" "adversarial"

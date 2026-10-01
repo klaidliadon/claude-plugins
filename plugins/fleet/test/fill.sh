@@ -17,19 +17,22 @@ assert_eq "$?" 1
 assert_eq "$out" "fleet-fill: unfilled {{DECISIONS_PATH}}"
 
 out="$("$FILL" "$DIR/templates/review-session.md" PR=https://github.com/o/r/pull/7 REQUEST_LINK=https://slack.example/p1 \
-  REVIEW_SKILL=none TASK_DIR=/f/reviews/r-7 REVIEWERS="adversarial, tests, architecture" \
+  REVIEW_SKILL=none TASK_DIR=/f/reviews/r-7 REPO_PATH=/w/r REVIEWERS="adversarial, tests, architecture" \
   FOCUS="$(printf 'architecture: a & b\\c\n/x/')")"
 assert_eq "$?" 0
 assert_not_contains "$out" "{{"
 assert_contains "$out" "run these fleet reviewers instead: adversarial, tests, architecture"
+assert_contains "$out" "/w/r as \`<repo-path>\`"
 assert_contains "$out" "$(printf 'architecture: a & b\\c\n/x/')"
 
 out="$("$FILL" "$DIR/templates/review-session.md" PR=x 2>&1)"
 assert_eq "$?" 1
-assert_eq "$out" "fleet-fill: unfilled {{FOCUS}} {{REQUEST_LINK}} {{REVIEWERS}} {{REVIEW_SKILL}} {{TASK_DIR}}"
+assert_eq "$out" "fleet-fill: unfilled {{FOCUS}} {{REPO_PATH}} {{REQUEST_LINK}} {{REVIEWERS}} {{REVIEW_SKILL}} {{TASK_DIR}}"
 
 out="$("$FILL" "$DIR/templates/worker-contract.md" TASK_DIR=/t ROUND=1 ROUND_INPUT="")"
 assert_eq "$?" 0
+assert_contains "$out" "Never write memory"
+assert_contains "$out" "learned: <fact>"
 assert_not_contains "$out" "{{"
 "$FILL" "$DIR/templates/worker-contract.md" TASK_DIR >/dev/null 2>&1
 assert_eq "$?" 2

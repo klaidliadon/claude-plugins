@@ -8,6 +8,7 @@
 6. Questions that touch another PR or repo go to the manager with `orchestration ask`. Never message a sibling worker. Never change a contract the spec does not list.
 7. Never merge, never force-push, never touch another worktree.
 8. No progress messages. `ask` is for decisions only.
+9. Never write memory: the repo's auto memory is shared and read-only for you. Put anything worth remembering in `worker_done` as `learned: <fact>` lines; the manager decides what to keep.
 
 Fleet files for this task: {{TASK_DIR}}
 Round: {{ROUND}}

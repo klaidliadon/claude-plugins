@@ -149,25 +149,25 @@ assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "1-api"
 
 export STUB_ORCA_CHECK="$T/check-empty.json"
 printf 'review_requests:\n  sources:\n    - slack: "#team"\n      repos: [o/app]\n' >"$FLEET_HOME/config.yaml"
-"$DIR/bin/fleet-review-request" add "#team" https://github.com/o/app/pull/7 alice https://slack.example/p1 2026-10-01T09:00:00Z >/dev/null
-RS="$FLEET_HOME/reviews/o-app-7/spec.md"
-review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\to-app-7\t'; }
-assert_eq "$(review_next)" $'reviews\to-app-7\treview\task review'
+"$DIR/bin/fleet-review-request" add "#team" https://github.com/o/app/pull/7 alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 >/dev/null
+RS="$FLEET_HOME/reviews/o+app+7/spec.md"
+review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\to+app+7\t'; }
+assert_eq "$(review_next)" $'reviews\to+app+7\treview\task review'
 for a in later no; do
   yq --front-matter=process -i ".answer = \"$a\"" "$RS"
-  assert_eq "$(review_next)" $'reviews\to-app-7\treview\tskipped'
+  assert_eq "$(review_next)" $'reviews\to+app+7\treview\tskipped'
 done
 yq --front-matter=process -i '.answer = "yes"' "$RS"
-assert_eq "$(review_next)" $'reviews\to-app-7\treview\tstart review session'
+assert_eq "$(review_next)" $'reviews\to+app+7\treview\tstart review session'
 echo run_000000000001 >"$FLEET_HOME/reviews/run.id"
 yq --front-matter=process -i '.session = {"task_id": "task_000000000006", "dispatch_id": "ctx_000000000007", "terminal": "term_x", "worktree_path": "/w"}' "$RS"
-assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" review_next)" $'reviews\to-app-7\treview\twait review session'
+assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" review_next)" $'reviews\to+app+7\treview\twait review session'
 out="$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_CHECK="$FX/orca/check-all.json" "$DIR/bin/fleet-status")"
-assert_contains "$(grep o-app-7 <<<"$out")" "answer question"
-assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_WORKER_SHOW="$FX/orca/worker-show-stale.json" review_next)" $'reviews\to-app-7\treview\treview session stalled: inspect'
-assert_eq "$(review_next)" $'reviews\to-app-7\treview\tdone'
+assert_contains "$(grep o+app+7 <<<"$out")" "answer question"
+assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_WORKER_SHOW="$FX/orca/worker-show-stale.json" review_next)" $'reviews\to+app+7\treview\treview session stalled: inspect'
+assert_eq "$(review_next)" $'reviews\to+app+7\treview\tdone'
 jq '.result.tasks[0].status = "failed"' "$FX/orca/task-list-running.json" >"$T/task-list-failed.json"
-assert_eq "$(STUB_ORCA_TASKS="$T/task-list-failed.json" review_next)" $'reviews\to-app-7\treview\treview session failed: inspect'
+assert_eq "$(STUB_ORCA_TASKS="$T/task-list-failed.json" review_next)" $'reviews\to+app+7\treview\treview session failed: inspect'
 yq --front-matter=process -i '.cleaned_at = "2026-10-02T00:00:00Z"' "$RS"
-assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "o-app-7"
+assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "o+app+7"
 finish_tests status

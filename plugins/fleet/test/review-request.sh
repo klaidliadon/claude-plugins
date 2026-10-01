@@ -13,7 +13,7 @@ pr_json() {
   printf '{"state":"%s","author":{"login":"%s"},"reviews":%s}' "$1" "$2" "${3:-[]}" >"$STUB_GH_PR"
 }
 add() {
-  OUT="$("$RR" add "#team" "$1" alice https://slack.example/p1 2026-10-01T09:00:00Z 2>&1)"
+  OUT="$("$RR" add "#team" "$1" alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
   RC=$?
 }
 
@@ -49,13 +49,13 @@ pr_json OPEN dependabot; add "$PR"
 assert_eq "$OUT" "skip $PR: author dependabot is skipped"
 pr_json OPEN bob '[{"author":{"login":"me"},"state":"COMMENTED"}]'; add "$PR"
 assert_eq "$OUT" "skip $PR: me already reviewed it"
-assert_fail test -e "$FLEET_HOME/reviews/o-app-12"
+assert_fail test -e "$FLEET_HOME/reviews/o+app+12"
 
 pr_json OPEN bob '[{"author":{"login":"carol"},"state":"APPROVED"}]'; add "$PR"
-assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o-app-12/spec.md"
-S="$FLEET_HOME/reviews/o-app-12/spec.md"
+assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+app+12/spec.md"
+S="$FLEET_HOME/reviews/o+app+12/spec.md"
 assert_eq "$(yq --front-matter=extract -o=json -I=0 '.' "$S")" \
-  '{"objective":"reviews","task":"o-app-12","kind":"review","pr":"'"$PR"'","repo":"app","requested_by":"alice","request_link":"https://slack.example/p1","asked_at":"2026-10-01T09:00:00Z","answer":null,"session":{"task_id":null,"dispatch_id":null,"terminal":null,"worktree_path":null}}'
+  '{"objective":"reviews","task":"o+app+12","kind":"review","pr":"'"$PR"'","repo":"app","repo_slug":"o/app","requested_by":"alice","request_link":"https://slack.example/p1","asked_at":"2026-10-01T09:00:00Z","request_channel":"C0TEAM","request_ts":"1759312800.000100","answer":null,"session":{"task_id":null,"dispatch_id":null,"terminal":null,"worktree_path":null}}'
 assert_contains "$(cat "$FLEET_HOME/ledger.md")" "review-request $PR from alice"
 
 : >"$STUB_LOG"
@@ -68,27 +68,52 @@ assert_eq "$OUT" "skip $PR: already tracked in $S"
 
 yq -i '.review_requests.skip.already_reviewer = false' "$FLEET_HOME/config.yaml"
 pr_json OPEN bob '[{"author":{"login":"me"},"state":"COMMENTED"}]'; add https://github.com/o/web/pull/3
-assert_eq "$OUT" "created $FLEET_HOME/reviews/o-web-3/spec.md"
+assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+3/spec.md"
 
 pr_json OPEN bob
 yq -i '.review_requests.sources[0].repos += ["o2/web"]' "$FLEET_HOME/config.yaml"
 add https://github.com/o2/web/pull/3
-assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o2-web-3/spec.md"
+assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o2+web+3/spec.md"
 
-mkdir -p "$FLEET_HOME/reviews/o-web-5"
+mkdir -p "$FLEET_HOME/reviews/o+web+5"
 add https://github.com/o/web/pull/5
-assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o-web-5/spec.md"
-assert_eq "$(ls -A "$FLEET_HOME/reviews/o-web-5")" "spec.md"
+assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+5/spec.md"
+assert_eq "$(ls -A "$FLEET_HOME/reviews/o+web+5")" "spec.md"
 
 STUB_GH_FAIL="pr view" add https://github.com/o/web/pull/6
-assert_eq "$RC" 1; assert_fail test -e "$FLEET_HOME/reviews/o-web-6"
+assert_eq "$RC" 1; assert_fail test -e "$FLEET_HOME/reviews/o+web+6"
 mkdir -p "$T/bin"
 printf '#!/usr/bin/env bash\n[ "$1" = -n ] && exit 1\nexec %s "$@"\n' "$(command -v yq)" >"$T/bin/yq"
 chmod +x "$T/bin/yq"
 PATH="$T/bin:$PATH" add https://github.com/o/web/pull/7
-assert_eq "$RC" 1; assert_eq "$(ls -A "$FLEET_HOME/reviews/o-web-7")" ""
+assert_eq "$RC" 1; assert_eq "$(ls -A "$FLEET_HOME/reviews/o+web+7")" ""
 add https://github.com/o/web/pull/7
-assert_eq "$OUT" "created $FLEET_HOME/reviews/o-web-7/spec.md"
+assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+7/spec.md"
+
+yq -i '.review_requests.sources[0].repos += ["a-b/c", "a/b-c"]' "$FLEET_HOME/config.yaml"
+add https://github.com/a-b/c/pull/1
+assert_eq "$OUT" "created $FLEET_HOME/reviews/a-b+c+1/spec.md"
+add https://github.com/a/b-c/pull/1
+assert_eq "$OUT" "created $FLEET_HOME/reviews/a+b-c+1/spec.md"
+assert_eq "$(yq --front-matter=extract '.repo_slug' "$FLEET_HOME/reviews/a+b-c+1/spec.md")" "a/b-c"
+
+mkdir "$FLEET_HOME/reviews/.lock-o+web+8"
+add https://github.com/o/web/pull/8
+assert_eq "$RC" 1; assert_contains "$OUT" ".lock-o+web+8 is held"
+assert_fail test -e "$FLEET_HOME/reviews/o+web+8"
+rmdir "$FLEET_HOME/reviews/.lock-o+web+8"
+add https://github.com/o/web/pull/8
+assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+8/spec.md"
+assert_fail test -e "$FLEET_HOME/reviews/.lock-o+web+8"
+
+yq -i '.review_requests.skip.already_reviewer = true' "$FLEET_HOME/config.yaml"
+STUB_GH_FAIL="api user" add https://github.com/o/web/pull/9
+assert_eq "$RC" 1; assert_fail test -e "$FLEET_HOME/reviews/o+web+9"
+assert_fail test -e "$FLEET_HOME/reviews/.lock-o+web+9"
+
+echo '[1]' >"$FLEET_HOME/review-requests.cursor"
+assert_fail "$RR" cursor "#team" 1759316400.000300 2>/dev/null
+assert_eq "$(cat "$FLEET_HOME/review-requests.cursor")" "[1]"
 
 OUT="$("$RR" add "#team" "$PR" alice 2>&1)"
 assert_eq "$?" 2; assert_contains "$OUT" "usage:"

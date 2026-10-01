@@ -12,7 +12,7 @@ You coordinate. Workers write code in their own Orca worktrees; you never do. Th
 Two optional files. Without either, the fleet runs `adversarial` (Codex) and `tests` on every PR, no cleanup hook, and no review requests.
 
 - `<repo>/.agents/fleet.yaml`, committed in each repo: `review_skill` (the skill a review session runs), `reviewers.<name>: [globs]` (extra reviewers by diff path), `focus.<name>` (text appended to that reviewer's prompt) and `cleanup` (a script run as `<script> <worktree> --apply` before worktree removal). A glob `new-dir:<glob>` matches a directory the PR creates.
-- `$FLEET_HOME/config.yaml`, the user's: `adversarial: codex | claude` and `review_requests` (`interval_min`, `sources[]` of `{slack, repos}`, `skip: {authors, already_reviewer}`).
+- `$FLEET_HOME/config.yaml`, the user's: `adversarial: codex | claude` and `review_requests` (`interval_min`, `sources[]` of `{slack, repos}`, `skip: {authors, already_reviewer}`, and `reactions: {start, done}`, the Slack emoji names added to a request when its review session starts and finishes; no `reactions` means no reactions).
 
 `<repo-path>` below is the repo's primary checkout: `orca repo show --repo name:<repo> --json` `.result.repo.path`. `<plugin>` is this plugin's root, two directories above this skill file; the commands below run from a repo checkout, so always spell out `<plugin>/bin/...`, `<plugin>/prompts/...` and `<plugin>/templates/...`. Source `<plugin>/bin/lib.sh` to call `fleet_reviewers`, `fleet_focus` and `fleet_config`.
 
@@ -25,6 +25,10 @@ Two optional files. Without either, the fleet runs `adversarial` (Codex) and `te
 ## State rule
 
 Never keep fleet state only in this conversation. After every Orca call, write what it returned into the spec frontmatter with `yq --front-matter=process -i` before doing anything else. After `/clear`, `fleet-status` and the files are the whole truth.
+
+## Memory
+
+Claude Code keys auto memory by git repository, so every worktree of a repo already reads the primary checkout's memory directory ([docs](https://code.claude.com/docs/en/memory)); no link or setting is needed. Workers treat it as read-only: the worker contract forbids memory writes and asks for `learned:` lines in `worker_done` instead. When a `worker_done` carries `learned:` lines, decide which ones are durable and write those to memory yourself.
 
 ## New work
 
@@ -88,14 +92,14 @@ A consuming `orca orchestration check --run <run> --json` returns the oldest una
 | `release stopped round <N>`, `release stopped lander` | `orca orchestration worker-release --dispatch <id> --json`, then set `released: true` on the stopped entry. If the call fails because the dispatch is already released, a previous session released it without recording it: set `released: true` and move on. A stopped dispatch needs `worker-stop` before this: `worker-release` alone returns `dispatch_inactive` on a dispatch that has not settled. Once released, `fleet-status` offers `restart round <N> (fresh agent)` or `start lander` again |
 | `rebind: orca orchestration run-use --id <run>` | This terminal is bound to another Run, so Orca fences this objective's inbox. Run the command only when the user wants to drive this objective now: binding it fences the Run that is bound today |
 | `ask review` | See "Review requests", step 6. If you already asked about this PR in this conversation and the user has not answered, do nothing |
-| `skipped` | The user answered `no` or `later`. Set `cleaned_at` so the row leaves the table; the spec stays, so the PR is never asked again |
+| `skipped` | The user answered `no` or `later`, or the PR closed before its session started. Set `cleaned_at` so the row leaves the table; the spec stays, so the PR is never asked again |
 | `start review session` | See "Review requests", step 7 |
-| `done` | The review session sent `worker_done`. Record and ack it under the inbox rule, `worker-release` its dispatch, and tell the user the verdict. Ask before removing its worktree with `orca worktree rm --worktree path:<worktree_path> --json`; on yes, remove it and set `cleaned_at` |
+| `done` | The review session sent `worker_done`. Each step below is recorded in `session` as soon as it succeeds, and a step already recorded is skipped, so a restart resumes where it stopped. Record and ack the `worker_done` under the inbox rule. `worker-release` its dispatch and set `session.released: true` (an already-released dispatch counts as done). If `reactions.done` is set, add it with `slack_add_reaction` on `request_channel` and `request_ts` and set `session.reacted_done: true` (`already_reacted` counts as done). Tell the user the verdict and ask before removing the worktree with `orca worktree rm --worktree path:<worktree_path> --json`; on yes, remove it (a missing worktree counts as done), set `session.removed: true`, then set `cleaned_at` |
 | anything ending in `inspect` | Record and ack any `worker_done` for this task under the inbox rule, so the Run inbox keeps moving. Show the user `orca orchestration worker-show --dispatch <id>` and `worker-read` output. Never stop, retry or release without their answer |
 
 ## Reviewers
 
-`fleet_reviewers <repo-path> <pr>` prints one reviewer per line: always `adversarial` and `tests`, plus each reviewer whose `.agents/fleet.yaml` globs match `gh pr diff <pr> --name-only`. Fix rounds and review sessions both use it. Also add `architecture` when the objective has specs in more than one repo. For each Claude reviewer, append `fleet_focus <repo-path> <name>` to its prompt when that prints text.
+`fleet_reviewers <repo-path> <pr>` prints one reviewer per line: always `adversarial` and `tests`, plus each reviewer whose `.agents/fleet.yaml` globs match `gh pr diff <pr> --name-only`. Fix rounds and review sessions both use it. A `new-dir:` glob fetches the PR's base branch from `origin` in `<repo-path>`, so `origin` must be the PR's base repository; when the fetch fails, `fleet_reviewers` exits 1 and you pick reviewers by hand. Also add `architecture` when the objective has specs in more than one repo. For each Claude reviewer, append `fleet_focus <repo-path> <name>` to its prompt when that prints text.
 
 ## Adversarial review
 
@@ -110,19 +114,24 @@ touch <objective dir>/decisions.md
 codex exec --sandbox workspace-write --add-dir <task dir> -C <repo-path> - < <task dir>/review-<N>-adversarial.prompt
 ```
 
-`<repo-path>` is the primary checkout, never a worker's worktree, so a stray Codex write cannot reach a fix round; the PR's change reaches Codex only through the diff. `<previous line>` is empty in round 1, and later `Previous findings: <task dir>/review-<N-1>-adversarial.md. Mark each item fixed or still open first.` `fleet-fill` exits 1 and names any placeholder left unfilled; never run Codex on a prompt it rejected. A review session runs the same commands with its own directory as both `<task dir>` and `<objective dir>`, and its own disposable worktree as `<repo-path>`.
+`<repo-path>` is the primary checkout, never a worker's worktree, so a stray Codex write cannot reach a fix round; the PR's change reaches Codex only through the diff. `<previous line>` is empty in round 1, and later `Previous findings: <task dir>/review-<N-1>-adversarial.md. Mark each item fixed or still open first.` `fleet-fill` exits 1 and names any placeholder left unfilled; never run Codex on a prompt it rejected. A review session runs the same commands with its own directory as both `<task dir>` and `<objective dir>`, and the repo's primary checkout as `<repo-path>`, never its own worktree.
 
 ## Review requests
 
 On `slack: check` from `fleet-watch`, for each `review_requests.sources[]` entry in `config.yaml`:
 
-1. Read the cursor: `fleet-review-request cursor "<source>"`. Empty means first run: look back one `interval_min`.
+1. Read the cursor: `<plugin>/bin/fleet-review-request cursor "<source>"`. Empty means first run: look back one `interval_min`.
 2. Search the source channel with the Slack MCP search tools for messages after the cursor ts that ask for a PR review and link a GitHub PR in one of the source's `repos`. Skip messages from the user themselves.
-3. For each match, run `fleet-review-request add "<source>" <pr-url> <requester> <message permalink> <message time, ISO 8601>`. It applies the repo filter, deduplicates by PR URL against every `reviews/*/spec.md` (cleaned or not), and applies `skip.authors` (PR author) and `skip.already_reviewer` (the `gh` user already reviewed). It prints `created <spec>` or `skip <url>: <reason>`.
-4. Write the cursor only after every match is processed: `fleet-review-request cursor "<source>" <newest message ts seen>`. A crash before this re-reads the same messages, and dedup makes that harmless.
-5. If `$FLEET_HOME/reviews/run.id` is missing, first adopt an existing Run: `orca orchestration run-list --json` `.result.runs | map(select(.objective == "reviews")) | max_by(.created_at) | .id`. Only when there is none, run `orca orchestration run-create --objective reviews --json`. Either way write the id to `run.id` before anything else, so a session that dies after the create adopts that Run next time instead of making another.
+3. For each match, run `<plugin>/bin/fleet-review-request add "<source>" <pr-url> <requester> <message permalink> <message time, ISO 8601> <channel id> <message ts>`. It applies the repo filter, deduplicates by PR (one spec per `<owner>+<repo>+<n>`, cleaned or not), and applies `skip.authors` (PR author) and `skip.already_reviewer` (the `gh` user already reviewed). It prints `created <spec>` or `skip <url>: <reason>`. Exit 1 means it failed or another add holds the lock: stop and do not move the cursor.
+4. Write the cursor only after every match is processed: `<plugin>/bin/fleet-review-request cursor "<source>" <newest message ts seen>`. A crash before this re-reads the same messages, and dedup makes that harmless.
+5. If `$FLEET_HOME/reviews/run.id` is missing, the Run's objective is `reviews <FLEET_HOME>`, which names this fleet. Adopt the oldest Run with exactly that objective from `orca orchestration run-list --json`, and tell the user if there is more than one. Only when there is none, run `orca orchestration run-create --objective "reviews <FLEET_HOME>" --json`. Either way write the id to `run.id` before anything else, so a session that dies after the create adopts that Run next time. One manager runs per `FLEET_HOME`; two at once can still create two Runs.
 6. Ask the user once, in one message, about every spec with NEXT `ask review`: PR, title, requester, request link. Write each answer to `answer` (`yes`, `no` or `later`).
-7. For each `yes`: fill the session spec with `<plugin>/bin/fleet-fill <plugin>/templates/review-session.md PR=<pr> REQUEST_LINK=<request_link> REVIEW_SKILL=<review_skill from fleet.yaml, or none> REVIEWERS="<fleet_reviewers output, comma-separated>" FOCUS="<each non-empty fleet_focus as name: text, or none>" TASK_DIR=<spec dir>`. Start it on a fresh worktree off the default branch with `orca orchestration worker-start --run <reviews run> --repo name:<repo> --worktree new-top-level --name review-<task> --setup skip --agent claude --task-title "reviews/<task> session" --spec "<filled spec>" --json`. Record `session.task_id`, `session.dispatch_id`, `session.terminal` and `session.worktree_path` as for a worker round.
+7. For each `yes`, in order, skipping any step already recorded:
+   1. `gh pr view <pr> --json state`. If the PR is no longer open, set `answer: closed` (NEXT becomes `skipped`) and stop.
+   2. Resolve the repo from `repo_slug`: `orca repo list --json` `.result.repos[] | select((.gitRemoteIdentity.canonicalKey | ascii_downcase) == ("github.com/" + <repo_slug> | ascii_downcase))`. Its `id` is the selector and its `path` is `<repo-path>`. If none or several match, tell the user and stop.
+   3. Fill the session spec: `<plugin>/bin/fleet-fill <plugin>/templates/review-session.md PR=<pr> REQUEST_LINK=<request_link> REPO_PATH=<repo-path> REVIEW_SKILL=<yaml_get <repo-path>/.agents/fleet.yaml .review_skill, or none> REVIEWERS="<fleet_reviewers output, comma-separated>" FOCUS="<each non-empty fleet_focus as name: text, or none>" TASK_DIR=<spec dir>`.
+   4. Start it on a fresh worktree off the default branch: `orca orchestration worker-start --run <reviews run> --repo id:<repo id> --worktree new-top-level --name review-<task> --setup skip --agent claude --task-title "reviews/<task> session" --spec "<filled spec>" --json`. Record `session.task_id`, `session.dispatch_id`, `session.terminal` and `session.worktree_path` as for a worker round.
+   5. If `reactions.start` is set, add it with `slack_add_reaction` on `request_channel` and `request_ts` (`already_reacted` counts as done), then set `session.reacted_start: true`.
 
 No `slack: check` means `config.yaml` has no sources, and no review requests run.
 

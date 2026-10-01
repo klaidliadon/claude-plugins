@@ -1082,5 +1082,18 @@
       "state": "review",
       "next": "review session stalled: inspect"
     }
+  },
+  {
+    "name": "review-closed",
+    "input": {
+      "kind": "review",
+      "answer": "closed",
+      "rounds": [],
+      "session": null
+    },
+    "want": {
+      "state": "review",
+      "next": "skipped"
+    }
   }
 ]
