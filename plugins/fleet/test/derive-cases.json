@@ -789,5 +789,132 @@
       "state": "landing",
       "next": "release stopped lander"
     }
+  },
+  {
+    "name": "blocked-unrecorded-stop",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "blocked",
+          "done_at": null,
+          "reviewers": []
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "release stopped round 1"
+    }
+  },
+  {
+    "name": "blocked-released",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "blocked",
+          "done_at": null,
+          "reviewers": [],
+          "released": true
+        }
+      ],
+      "pr": null
+    },
+    "want": {
+      "state": "dispatched",
+      "next": "restart round 1 (fresh agent)"
+    }
+  },
+  {
+    "name": "blocked-lander",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true
+        },
+        {
+          "round": 2,
+          "kind": "lander",
+          "status": "blocked",
+          "done_at": null,
+          "reviewers": []
+        }
+      ]
+    },
+    "want": {
+      "state": "landing",
+      "next": "release stopped lander"
+    }
+  },
+  {
+    "name": "reused-terminal-fresh-dispatch",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        },
+        {
+          "round": 2,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759300000,
+          "dispatched_at": 1759316300,
+          "agent_wait": false
+        }
+      ]
+    },
+    "want": {
+      "state": "fixing",
+      "next": "wait worker"
+    }
+  },
+  {
+    "name": "reused-terminal-silent-since-dispatch",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ]
+        },
+        {
+          "round": 2,
+          "kind": "worker",
+          "status": "running",
+          "done_at": null,
+          "reviewers": [],
+          "last_output_at": 1759300000,
+          "dispatched_at": 1759315000,
+          "agent_wait": false
+        }
+      ]
+    },
+    "want": {
+      "state": "fixing",
+      "next": "worker stalled: inspect"
+    }
   }
 ]

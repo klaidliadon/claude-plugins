@@ -106,7 +106,13 @@ for variant in \
 done
 jq 'del(.result.observation.agentWait)' "$FX/orca/worker-show-stale.json" >"$T/no-wait-key.json"
 out="$(STUB_ORCA_WORKER_SHOW="$T/no-wait-key.json" "$DIR/bin/fleet-status" --tsv)"
-assert_contains "$out" $'obj\t1-api\tpr-open\tworker stalled: inspect'
+assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
+jq --arg d "$(date -u +'%Y-%m-%d %H:%M:%S')" '.result.dispatch.dispatchedAt = $d' "$FX/orca/worker-show-stale.json" >"$T/fresh-dispatch.json"
+out="$(STUB_ORCA_WORKER_SHOW="$T/fresh-dispatch.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tpr-open\twait worker'
+jq '.result.tasks[0].status = "blocked"' "$FX/orca/task-list-running.json" >"$T/task-list-blocked.json"
+out="$(STUB_ORCA_TASKS="$T/task-list-blocked.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tpr-open\trelease stopped round 1'
 export STUB_ORCA_TASKS="$FX/orca/task-list-completed.json"
 
 mkdir -p "$FLEET_HOME/obj2/1-a" "$FLEET_HOME/obj2/2-b"

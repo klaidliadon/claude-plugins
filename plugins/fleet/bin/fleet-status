@@ -63,7 +63,7 @@ orca_task_statuses() {
   local res
   res="$(orca_call orchestration task-list --run "$1")" || return
   jq -c '[.tasks[] | {key: .id, value: {
-    status: ({dispatched: "running", completed: "completed", failed: "failed"}[.status] // "unknown"),
+    status: ({dispatched: "running", completed: "completed", failed: "failed", blocked: "blocked"}[.status] // "unknown"),
     done_at: (if .completed_at then (.completed_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) else null end)
   }}] | from_entries' <<<"$res"
 }
@@ -76,13 +76,14 @@ orca_asks() {
     '[.messages[] | select(.type == "question" and (.id as $i | $answered | index($i) | not)) | .from_handle | sub("^dispatch:"; "")]' <<<"$res"
 }
 
-# worker_activity never fails: a broken worker-show, or one missing the output time or the observation, leaves both fields null.
+# worker_activity never fails: a broken worker-show, or one missing the output time or agentWait, leaves the activity fields null.
 worker_activity() {
   local out a none='{"last_output_at":null,"agent_wait":null}'
   out="$(orca orchestration worker-show --dispatch "$1" --json 2>/dev/null)" || true
   a="$(jq -c 'if .ok == true then .result else {} end
-    | select((.terminal.lastOutputAt | type) == "number" and (.observation | type) == "object")
-    | {last_output_at: (.terminal.lastOutputAt / 1000 | floor), agent_wait: (.observation.agentWait != null)}' <<<"$out" 2>/dev/null)" || a=""
+    | select((.terminal.lastOutputAt | type) == "number" and ((.observation | type) == "object" and (.observation | has("agentWait"))))
+    | {last_output_at: (.terminal.lastOutputAt / 1000 | floor), agent_wait: (.observation.agentWait != null),
+       dispatched_at: (try (.dispatch.dispatchedAt | sub(" "; "T") + "Z" | fromdateiso8601) catch null)}' <<<"$out" 2>/dev/null)" || a=""
   printf '%s' "${a:-$none}"
 }
 
