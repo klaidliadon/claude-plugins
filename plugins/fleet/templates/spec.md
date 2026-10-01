@@ -5,7 +5,6 @@ repo: <repo name as registered in Orca>
 base: <base branch>
 worktree: <orca --name>
 agent: claude
-models: {}
 depends_on: []
 source: <issue URL, Slack permalink, or "free text">
 ---
