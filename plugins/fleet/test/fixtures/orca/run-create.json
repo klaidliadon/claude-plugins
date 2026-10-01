@@ -1,22 +1,22 @@
 {
-  "id": "4237c408-f707-4b42-879a-6ec198dbc6f9",
+  "id": "00000000-0000-0000-0000-000000000009",
   "ok": true,
   "result": {
     "run": {
-      "id": "run_17c08028b992",
+      "id": "run_000000000001",
       "objective": "fleet spike",
-      "coordinator_handle": "term_d741d2c0-7990-4eb3-9894-8254f528adda",
+      "coordinator_handle": "term_00000000-0000-0000-0000-000000000101",
       "consumer_generation": 1,
       "legacy": 0,
       "created_at": "2026-09-30T19:57:07Z",
       "updated_at": "2026-09-30T19:57:07Z"
     },
     "mutation": {
-      "requestId": "96392d70-bb55-475b-8c5d-d62d03aff717",
+      "requestId": "00000000-0000-0000-0000-00000000000a",
       "replayed": false
     }
   },
   "_meta": {
-    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+    "runtimeId": "00000000-0000-0000-0000-000000000002"
   }
 }

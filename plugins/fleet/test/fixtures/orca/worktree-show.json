@@ -1,23 +1,23 @@
 {
-  "id": "2ba0f1ec-fd72-44dc-9ac4-474bf313587d",
+  "id": "00000000-0000-0000-0000-00000000001d",
   "ok": true,
   "result": {
     "worktree": {
-      "id": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37::/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+      "id": "00000000-0000-0000-0000-000000000012::/home/user/orca/workspaces/claude-plugins/fleet-spike",
       "identity": {
-        "key": "wt2:local:b457f6c8-b521-4183-a877-b3d33c454b32",
+        "key": "wt2:local:00000000-0000-0000-0000-00000000001e",
         "executionHostId": "local",
-        "instanceId": "b457f6c8-b521-4183-a877-b3d33c454b32"
+        "instanceId": "00000000-0000-0000-0000-00000000001e"
       },
-      "instanceId": "b457f6c8-b521-4183-a877-b3d33c454b32",
-      "repoId": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37",
+      "instanceId": "00000000-0000-0000-0000-00000000001e",
+      "repoId": "00000000-0000-0000-0000-000000000012",
       "projectId": "github:klaidliadon/claude-plugins",
       "hostId": "local",
-      "projectHostSetupId": "5569b421-f0ec-47ac-8d9d-59bd1aaa9e37",
+      "projectHostSetupId": "00000000-0000-0000-0000-000000000012",
       "creatorProvenance": {
         "kind": "host"
       },
-      "path": "/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+      "path": "/home/user/orca/workspaces/claude-plugins/fleet-spike",
       "head": "c7b185851b9b2b73858aa35020f57bb10a3bf24a",
       "branch": "refs/heads/klaidliadon/fleet-spike",
       "isBare": false,
@@ -50,7 +50,7 @@
       "childWorktreeIds": [],
       "lineage": null,
       "git": {
-        "path": "/Users/aguerrieri/orca/workspaces/claude-plugins/fleet-spike",
+        "path": "/home/user/orca/workspaces/claude-plugins/fleet-spike",
         "head": "c7b185851b9b2b73858aa35020f57bb10a3bf24a",
         "branch": "refs/heads/klaidliadon/fleet-spike",
         "isBare": false,
@@ -59,6 +59,6 @@
     }
   },
   "_meta": {
-    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+    "runtimeId": "00000000-0000-0000-0000-000000000002"
   }
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$BIN/lib.sh"
 cmd="${FLEET_STATUS_CMD:-$BIN/fleet-status --tsv}"
 once=0 state="${TMPDIR:-/tmp}/fleet-watch.state"
 while [ $# -gt 0 ]; do
@@ -25,8 +26,27 @@ poll() {
   printf '%s\n' "$now" >"$state"
 }
 
-if [ "$once" = 1 ]; then poll; exit 0; fi
+# slack_tick prints "slack: check" every review_requests.interval_min minutes while config.yaml lists sources.
+slack_tick() {
+  local n interval last now
+  if ! n="$(fleet_config '.review_requests.sources | length' 2>/dev/null)" ||
+    ! interval="$(fleet_config '.review_requests.interval_min // 20' 2>/dev/null)" ||
+    ! [[ "${interval:-20}" =~ ^[1-9][0-9]*$ ]]; then
+    [ -f "$state.config-failed" ] || { echo "fleet-watch: config.yaml invalid"; touch "$state.config-failed"; }
+    return 0
+  fi
+  rm -f "$state.config-failed"
+  [ "${n:-0}" -gt 0 ] || return 0
+  now="$(date +%s)"
+  last="$(cat "$state.slack" 2>/dev/null || echo 0)"
+  [ $((now - last)) -ge $((${interval:-20} * 60)) ] || return 0
+  echo "slack: check"
+  echo "$now" >"$state.slack"
+}
+
+if [ "$once" = 1 ]; then poll; slack_tick; exit 0; fi
 while true; do
   poll
+  slack_tick
   sleep "${FLEET_WATCH_INTERVAL:-60}"
 done

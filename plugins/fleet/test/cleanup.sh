@@ -15,6 +15,8 @@ setup() {
   mkdir -p "$T/repo/scripts"
   printf '#!/usr/bin/env bash\necho "$@" > "%s/db-cleanup-called"\n' "$T" >"$T/repo/scripts/worktree-db-cleanup.sh"
   chmod +x "$T/repo/scripts/worktree-db-cleanup.sh"
+  mkdir -p "$T/repo/.agents"
+  echo 'cleanup: scripts/worktree-db-cleanup.sh' >"$T/repo/.agents/fleet.yaml"
   git -C "$T/repo" worktree add -q -b feat "$T/wt" origin/main 2>/dev/null
   echo work >"$T/wt/work.txt"
   git -C "$T/wt" add work.txt
@@ -27,7 +29,7 @@ setup() {
 ---
 objective: obj
 task: 1-task
-repo: omsx
+repo: app
 pr: https://github.com/o/r/pull/7
 orca:
   - round: 1
@@ -102,7 +104,31 @@ git -C "$T/other" push -q -f origin rebased:feat 2>/dev/null
 pr_json MERGED "$(git -C "$T/other" rev-parse HEAD)"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 0; assert_contains "$OUT" "cleaned obj/1-task"
 
-setup; yq --front-matter=process -i '.repo = "devops"' "$SPEC"; run_cleanup --apply "$SPEC"
+setup; run_cleanup "$SPEC"
+assert_contains "$OUT" "/repo/scripts/worktree-db-cleanup.sh $T/wt --apply"
+
+setup; rm "$T/repo/.agents/fleet.yaml"; run_cleanup "$SPEC"
+assert_eq "$RC" 0; assert_not_contains "$OUT" "worktree-db-cleanup"
+run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"; assert_fail test -d "$T/wt"
+
+setup; echo 'review_skill: review' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
+
+setup; echo 'cleanup: [unclosed' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cannot read"
+assert_ok test -d "$T/wt"; assert_not_contains "$(cat "$STUB_LOG")" "worktree rm"
+
+setup; echo 'cleanup: scripts/missing.sh' >"$T/repo/.agents/fleet.yaml"; run_cleanup "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cleanup hook scripts/missing.sh is not executable"
+
+setup; chmod -x "$T/repo/scripts/worktree-db-cleanup.sh"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cleanup hook scripts/worktree-db-cleanup.sh is not executable"
+assert_ok test -d "$T/wt"
+
+setup; printf '#!/usr/bin/env bash\nexit 3\n' >"$T/repo/scripts/worktree-db-cleanup.sh"; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cleanup hook scripts/worktree-db-cleanup.sh failed"
+assert_ok test -d "$T/wt"; assert_ok git -C "$T/repo" show-ref --verify --quiet refs/heads/feat
+assert_not_contains "$(cat "$STUB_LOG")" "worktree rm"
 
 finish_tests cleanup

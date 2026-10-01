@@ -104,7 +104,7 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
     [ -n "$statuses" ] || statuses='{}'
   fi
   activity='{}'
-  for d in $(jq -r --argjson st "$statuses" '(.orca // [])[] | select($st[.task_id].status == "running") | .dispatch_id' <<<"$fm"); do
+  for d in $(jq -r --argjson st "$statuses" '(.orca // [])[], (.session // {} | select(.task_id)) | select($st[.task_id].status == "running") | .dispatch_id' <<<"$fm"); do
     activity="$(jq -c --arg d "$d" --argjson a "$(worker_activity "$d")" '.[$d] = $a' <<<"$activity")"
   done
   unmerged='[]'
@@ -125,11 +125,13 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
     --argjson unmerged "$unmerged" --argjson reviewed "$reviewed" \
     --argjson now "$(date +%s)" '{
       objective: $fm.objective, task: $fm.task, repo: $fm.repo,
+      kind: ($fm.kind // "task"), answer: ($fm.answer // null),
+      session: (if $fm.session.task_id then $fm.session + ($st[$fm.session.task_id] // {status: "unknown"}) + ($activity[$fm.session.dispatch_id] // {}) else null end),
       approved_at: ($fm.approved_at // null), spec_reviewed: $reviewed,
       deps_unmerged: $unmerged,
       rounds: [($fm.orca // [])[] | . + ($st[.task_id] // {status: "unknown", done_at: null}) + ($activity[.dispatch_id] // {})],
       reviews: $reviews, pr: $pr,
-      asks: ([($fm.orca // [])[].dispatch_id] as $ids | [$asks[] | select(. as $a | $ids | index($a))] | length),
+      asks: ([($fm.orca // [])[].dispatch_id, ($fm.session.dispatch_id // empty)] as $ids | [$asks[] | select(. as $a | $ids | index($a))] | length),
       fenced: $fenced, run: $run, now: $now, stall_after: $stall_after
     }' | jq -c -f "$BIN/derive.jq")")
 done

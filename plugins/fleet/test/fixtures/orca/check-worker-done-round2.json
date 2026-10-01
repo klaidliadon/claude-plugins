@@ -1,22 +1,22 @@
 {
-  "id": "11b8f007-f8b0-47ba-8bf1-88fc3ae9fa0e",
+  "id": "00000000-0000-0000-0000-000000000004",
   "ok": true,
   "result": {
-    "runId": "run_17c08028b992",
-    "deliveryId": "delivery_85bbaf56c078",
+    "runId": "run_000000000001",
+    "deliveryId": "delivery_000000000009",
     "messages": [
       {
-        "id": "msg_5a2ee7cc598b",
-        "run_id": "run_17c08028b992",
+        "id": "msg_000000000002",
+        "run_id": "run_000000000001",
         "delivery_contract": "current_delivery",
-        "from_handle": "term_7670de54-1fc1-4b33-b7a9-a0225dcf2fae",
-        "to_handle": "run:run_17c08028b992",
+        "from_handle": "term_00000000-0000-0000-0000-000000000100",
+        "to_handle": "run:run_000000000001",
         "subject": "Recalled 'two', appended to SPIKE.md",
         "body": "Recalled from session context, before reading any file, that the coordinator's earlier reply was 'two'. Appended 'two' on a new line, so SPIKE.md now reads one, two, two. Nothing left; the file is still uncommitted.",
         "type": "worker_done",
         "priority": "normal",
         "thread_id": null,
-        "payload": "{\"taskId\":\"task_221aa7b3c60c\",\"dispatchId\":\"ctx_96405c2b0964\",\"outcome\":\"succeeded\",\"filesModified\":[\"SPIKE.md\"]}",
+        "payload": "{\"taskId\":\"task_000000000003\",\"dispatchId\":\"ctx_000000000004\",\"outcome\":\"succeeded\",\"filesModified\":[\"SPIKE.md\"]}",
         "created_at": "2026-09-30T19:59:05Z",
         "delivered_at": null
       }
@@ -28,11 +28,11 @@
     "cancelled": false,
     "connectionLost": false,
     "mutation": {
-      "requestId": "101a6b81-f999-428c-ace7-cea2cd6633c9",
+      "requestId": "00000000-0000-0000-0000-000000000005",
       "replayed": false
     }
   },
   "_meta": {
-    "runtimeId": "acc5c5a5-9615-4d9f-9781-72a36a073443"
+    "runtimeId": "00000000-0000-0000-0000-000000000002"
   }
 }

@@ -26,7 +26,14 @@ def stopped($r): ($r.stopped // false) or $r.status == "blocked";
 | (if $w == null then null
    elif $w.status == "completed" then $w
    else (workers | map(select(.round == $w.round - 1)) | last) end) as $shown
-| (if .approved_at == null then
+| (if .kind == "review" then
+     (if .answer == null then {state: "review", next: "ask review"}
+      elif .answer != "yes" then {state: "review", next: "skipped"}
+      elif .session == null then {state: "review", next: "start review session"}
+      elif .session.status == "running" then {state: "review", next: (if stalled(.session) then "review session stalled: inspect" else "wait review session" end)}
+      elif .session.status == "completed" then {state: "review", next: "done"}
+      else {state: "review", next: "review session \(.session.status): inspect"} end)
+   elif .approved_at == null then
      (if .spec_reviewed then {state: "spec-reviewed", next: "await your go"}
       else {state: "drafted", next: "run spec review"} end)
    elif (.deps_unmerged | length) > 0 then {state: "waiting", next: "blocked on \(.deps_unmerged | join(", ")) merge"}
