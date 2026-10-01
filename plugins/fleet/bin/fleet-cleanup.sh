@@ -46,19 +46,19 @@ if [ "$(git -C "$path" rev-parse HEAD)" != "$head" ]; then
 fi
 shown="$(orca worktree show --worktree "identity:$identity" --json | jq -r ".result.worktree.path // empty")"
 [ -n "$shown" ] && [ "$(cd "$shown" 2>/dev/null && pwd -P)" = "$(cd "$path" && pwd -P)" ] || refuse "identity $identity is not $path"
+hook="$(yaml_get "$primary/.agents/fleet.yaml" .cleanup)" || refuse "cannot read $primary/.agents/fleet.yaml"
+[ -z "$hook" ] || [ -x "$primary/$hook" ] || refuse "cleanup hook $hook is not executable"
 
-db=""
-[ "$(fm_get "$spec" .repo)" != omsx ] || db="$primary/scripts/worktree-db-cleanup.sh"
 objtask="$(fm_get "$spec" '.objective')/$(fm_get "$spec" '.task')"
 if [ "$apply" = 0 ]; then
   echo "dry run for $objtask:"
-  if [ -n "$db" ] && [ -x "$db" ]; then echo "  $db $path --apply"; fi
+  [ -z "$hook" ] || echo "  $primary/$hook $path --apply"
   echo "  orca worktree rm --worktree identity:$identity"
   echo "  delete branch $branch locally and on origin"
   exit 0
 fi
 
-if [ -n "$db" ] && [ -x "$db" ]; then (cd "$primary" && "$db" "$path" --apply); fi
+[ -z "$hook" ] || (cd "$primary" && "$primary/$hook" "$path" --apply) || refuse "cleanup hook $hook failed"
 orca worktree rm --worktree "identity:$identity" --json >/dev/null
 if git -C "$primary" show-ref --verify --quiet "refs/heads/$branch"; then
   git -C "$primary" branch -D "$branch" >/dev/null

@@ -916,5 +916,151 @@
       "state": "fixing",
       "next": "worker stalled: inspect"
     }
+  },
+  {
+    "name": "review-ask",
+    "input": {
+      "kind": "review",
+      "answer": null,
+      "approved_at": null,
+      "rounds": []
+    },
+    "want": {
+      "state": "review",
+      "next": "ask review"
+    }
+  },
+  {
+    "name": "review-no",
+    "input": {
+      "kind": "review",
+      "answer": "no",
+      "approved_at": null,
+      "rounds": []
+    },
+    "want": {
+      "state": "review",
+      "next": "skipped"
+    }
+  },
+  {
+    "name": "review-later",
+    "input": {
+      "kind": "review",
+      "answer": "later",
+      "approved_at": null,
+      "rounds": []
+    },
+    "want": {
+      "state": "review",
+      "next": "skipped"
+    }
+  },
+  {
+    "name": "review-later-with-session",
+    "input": {
+      "kind": "review",
+      "answer": "later",
+      "rounds": [],
+      "session": {
+        "task_id": "t",
+        "status": "running"
+      }
+    },
+    "want": {
+      "next": "skipped"
+    }
+  },
+  {
+    "name": "review-start",
+    "input": {
+      "kind": "review",
+      "answer": "yes",
+      "approved_at": null,
+      "rounds": [],
+      "session": null
+    },
+    "want": {
+      "state": "review",
+      "next": "start review session"
+    }
+  },
+  {
+    "name": "review-wait",
+    "input": {
+      "kind": "review",
+      "answer": "yes",
+      "rounds": [],
+      "session": {
+        "task_id": "t",
+        "dispatch_id": "d",
+        "status": "running"
+      }
+    },
+    "want": {
+      "state": "review",
+      "next": "wait review session"
+    }
+  },
+  {
+    "name": "review-done",
+    "input": {
+      "kind": "review",
+      "answer": "yes",
+      "rounds": [],
+      "session": {
+        "task_id": "t",
+        "dispatch_id": "d",
+        "status": "completed"
+      }
+    },
+    "want": {
+      "state": "review",
+      "next": "done"
+    }
+  },
+  {
+    "name": "review-failed",
+    "input": {
+      "kind": "review",
+      "answer": "yes",
+      "rounds": [],
+      "session": {
+        "task_id": "t",
+        "dispatch_id": "d",
+        "status": "failed"
+      }
+    },
+    "want": {
+      "state": "review",
+      "next": "review session failed: inspect"
+    }
+  },
+  {
+    "name": "review-ask-pending-question",
+    "input": {
+      "kind": "review",
+      "answer": "yes",
+      "rounds": [],
+      "session": {
+        "task_id": "t",
+        "status": "running"
+      },
+      "asks": 1
+    },
+    "want": {
+      "next": "answer question",
+      "inbox": "1 ask"
+    }
+  },
+  {
+    "name": "task-kind-unchanged",
+    "input": {
+      "kind": "task",
+      "answer": "yes"
+    },
+    "want": {
+      "next": "start fix round 2"
+    }
   }
 ]

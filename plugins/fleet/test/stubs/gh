@@ -2,5 +2,7 @@
 echo "gh $*" >>"$STUB_LOG"
 case "$1 $2" in
   "pr view") cat "$STUB_GH_PR" ;;
+  "pr diff") cat "$STUB_GH_DIFF" ;;
+  "api user") cat "$STUB_GH_USER" ;;
   *) exit 0 ;;
 esac

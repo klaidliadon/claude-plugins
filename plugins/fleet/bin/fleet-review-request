@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "$0")/lib.sh"
+
+usage="usage: fleet-review-request cursor <source> [<ts>] | add <source> <pr-url> <requested_by> <request_link> <asked_at>"
+cursor="$FLEET_HOME/review-requests.cursor"
+
+case "${1:-}" in
+  cursor)
+    src="${2:?$usage}"
+    if [ $# -eq 2 ]; then
+      src="$src" yaml_get "$cursor" '.[strenv(src)]'
+      exit 0
+    fi
+    mkdir -p "$FLEET_HOME"
+    [ -s "$cursor" ] || echo '{}' >"$cursor"
+    src="$src" ts="${3:?$usage}" yq -i '.[strenv(src)] = strenv(ts)' "$cursor"
+    ;;
+  add)
+    [ $# -eq 6 ] || { echo "$usage" >&2; exit 2; }
+    src="$2" url="$3"
+    [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]] || { echo "fleet-review-request: not a PR URL: $url" >&2; exit 2; }
+    slug="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" repo="${BASH_REMATCH[2]}" task="${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+    dir="$FLEET_HOME/reviews/$task"
+    skip() { echo "skip $url: $*"; exit 0; }
+    repos="$(src="$src" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")')"
+    [[ " $repos " == *" $slug "* ]] || skip "$slug is not configured for $src"
+    for s in "$FLEET_HOME"/reviews/*/spec.md; do
+      [ -e "$s" ] || continue
+      [ "$(fm_get "$s" .pr)" != "$url" ] || skip "already tracked in $s"
+    done
+    [ ! -e "$dir" ] || { echo "fleet-review-request: $dir exists for another PR" >&2; exit 1; }
+    pr="$(gh pr view "$url" --json state,author,reviews)"
+    [ "$(jq -r .state <<<"$pr")" = OPEN ] || skip "PR is $(jq -r .state <<<"$pr")"
+    author="$(jq -r .author.login <<<"$pr")"
+    [ -z "$(a="$author" fleet_config '.review_requests.skip.authors[] | select(. == strenv(a))')" ] || skip "author $author is skipped"
+    if [ "$(fleet_config '.review_requests.skip.already_reviewer')" = true ]; then
+      me="$(gh api user | jq -r .login)"
+      ! jq -e --arg me "$me" 'any(.reviews[]?; .author.login == $me)' >/dev/null <<<"$pr" || skip "$me already reviewed it"
+    fi
+    mkdir -p "$dir"
+    url="$url" repo="$repo" task="$task" by="$4" link="$5" at="$6" yq -n '
+      .objective = "reviews" | .task = strenv(task) | .kind = "review" | .pr = strenv(url) | .repo = strenv(repo)
+      | .requested_by = strenv(by) | .request_link = strenv(link) | .asked_at = strenv(at) | .answer = null
+      | .session = {"task_id": null, "dispatch_id": null, "terminal": null, "worktree_path": null}' |
+      { echo ---; cat; echo ---; } >"$dir/spec.md"
+    ledger_append "review-request $url from $4"
+    echo "created $dir/spec.md"
+    ;;
+  *) echo "$usage" >&2; exit 2 ;;
+esac

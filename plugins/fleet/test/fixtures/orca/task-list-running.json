@@ -11,7 +11,7 @@
         "parent_id": null,
         "created_by_terminal_handle": "term_d741d2c0-7990-4eb3-9894-8254f528adda",
         "created_by_pane_key": "2e710d39-870b-47c2-b140-e41bb5ee34d7:2361bb07-3cf8-48b0-a0f6-7af7f1b13c3e",
-        "created_by_process_incarnation": "e158500f-9541-482c-8a9a-64317ce88855::/Users/aguerrieri/Workspace/0xPolygon/omsx@@1426caa4:8a68f5a9-95b2-431e-9473-e66d076e08a6",
+        "created_by_process_incarnation": "e158500f-9541-482c-8a9a-64317ce88855::/Users/aguerrieri/Workspace/example/app@@1426caa4:8a68f5a9-95b2-431e-9473-e66d076e08a6",
         "created_by_run_generation": 1,
         "task_title": "fleet-spike/1-probe round 1",
         "display_name": "fleet-spike/1-probe round 1",

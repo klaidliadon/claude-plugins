@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+usage="usage: fleet-fill <template> [KEY=value ...]"
+out="$(cat "${1:?$usage}")"
+shift
+for kv in "$@"; do
+  [[ "$kv" == *=* ]] || { echo "$usage" >&2; exit 2; }
+  out="${out//"{{${kv%%=*}}}"/"${kv#*=}"}"
+done
+if left="$(grep -o '{{[A-Z_]*}}' <<<"$out" | LC_ALL=C sort -u | paste -sd' ' -)"; then
+  echo "fleet-fill: unfilled $left" >&2
+  exit 1
+fi
+printf '%s\n' "$out"
