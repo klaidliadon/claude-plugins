@@ -1,6 +1,6 @@
 ---
 name: gh-workflow
-description: Use when authoring a GitHub pull request or issue body, composing a bug report or proposal issue, deciding whether a PR is ready to open, working through the review pipeline that gates opening a PR, formatting code-review findings, formatting a reply to a review comment or resolving its thread via gh api (land-pr owns the review loop itself), or coordinating chained/dependent PRs that have a required merge or deploy order.
+description: Use when authoring, revising, or tightening a GitHub pull request or issue body (including asks to write it "in human", clearer, or shorter), composing a bug report or proposal issue, deciding whether a PR is ready to open, working through the review pipeline that gates opening a PR, formatting code-review findings, formatting a reply to a review comment or resolving its thread via gh api (land-pr owns the review loop itself), or coordinating chained/dependent PRs that have a required merge or deploy order.
 ---
 
 # gh-workflow
@@ -19,12 +19,15 @@ PR descriptions and issue bodies share the same composition rules. Write both fo
 
 ## PR descriptions
 
-Every PR body:
+A PR body explains the what: what will be different, for whom, and why it matters. Write it from the reader's gaps, not the session's work log.
+
+### Template
+
+A repo's `.github/PULL_REQUEST_TEMPLATE.md` is canonical when it exists: read it first, keep its headings and order, fill its required sections. A repo PR-body skill (omsx `pr-authoring`) adds its repo rules on top of this section. Without a template, every PR body is:
 
 ```markdown
 ## Goal
-<1-3 sentences: what this change does and why it matters. A big change ends
-with a one-line before→after: "X goes from <old behavior> to <new behavior>.">
+<1-3 sentences: what will be different, for whom, and why it matters.>
 
 ## Problem it solves
 - <the concrete pain this fixes>
@@ -35,10 +38,44 @@ with a one-line before→after: "X goes from <old behavior> to <new behavior>.">
 - **<another moving part>.** <...>
 ```
 
-- With nothing waiting, the body starts at `## Goal`. Mechanism and evidence follow the human summary.
-- Human sections carry no file paths, type names, or config keys (the diff has those), and no diff rehash or agent footers. Extra sections (`## Notes`: risky migration, deploy step) only when genuinely needed.
-- Test evidence, when shown, is real: command + pasted result. Never aspirational checklists (`- [ ] Verify edge cases`).
-- Chained/stacked PRs: the blocking callout goes first, above `## Goal` (see below).
+### Gather the facts
+
+Read the branch diff and any linked issue or review thread before drafting. Never infer intent from the branch name. From those, identify what will be different in the running system or for its users, the concrete pain it removes, and whether a person, decision, deploy, or dependency is blocking it.
+
+### Write the body
+
+- **Required action first.** If something is waiting, one plain line above `## Goal` names it and who must act: `Action needed: the API team must confirm the response shape before this can merge.` Nothing waiting → start at `## Goal`, no "No blockers" boilerplate. Chained PRs use the blocking callout below.
+- **Effect before artifact.** Say what will be different before naming anything that changed. "Viewers can no longer move money from the browser" lands; "plan.md is rewritten" does not. For a docs or plan PR, the effect is what the plan makes happen, then how it differs from the version on the default branch.
+- **Before and after against the default branch.** One sentence for one property: "Session cleanup goes from browser-only logout to server-side revocation." Two or more properties → a table, current state in one column and new state in the other.
+- **Diagram a changed topology.** When the PR moves a system boundary or a moving part (a new service hop, a request flow rerouted, a queue or cache added or removed), draw a mermaid before vs after: two diagrams, the default branch and this PR. Diagram only what the reader runs or calls. Never internals or function calls, and never the process: tickets, phases, or files. No topology change → no diagram.
+- **Human sections stay human.** No file paths, type names, function names, or config keys (the diff has those), no line-by-line diff rehash. Mechanism follows the summary.
+- **After a long session, reread and cut** anything that narrates how the work went.
+
+### What stays out
+
+- **Test results.** CI carries pass/fail, and pasted output goes stale on the next push. No `## Verification`, no aspirational checklists. When a repo template asks for testing, list the commands and manual checks that ran, one line each, never their output.
+- **Review triage and follow-ups.** No bot or Codex finding summaries, no "not in this PR" lists. Follow-ups go to a tracking issue; triage stays in private notes.
+- **`## Notes`** only for something the merger must not miss: a merge-order blocker, a deploy step, a risky migration.
+- **Agent footers and session links.** Sessions are private, so a session URL is a dead link for every reviewer, and squash-merge can carry it into the default branch's history. This overrides any harness attribution reminder for PR bodies; the commit trailer stays.
+- **Empty or irrelevant sections.** Drop them rather than pad.
+
+### Check the first screen
+
+Before publishing, a reviewer must answer these in about ten seconds without opening the diff:
+
+- What will be different, and for whom?
+- Why does it matter?
+- Could a teammate outside this work retell it?
+- What, if anything, is waiting?
+
+### Print the title and link
+
+After creating a PR or pushing to its branch, end the reply with the title in backticks and the bare URL on the next line, read from `gh pr view --json title,url`, never from memory. Every push, not only the first.
+
+```markdown
+`feat(backoffice): exchange rates graph from captured quotes`
+https://github.com/0xPolygon/omsx/pull/3596
+```
 
 ## Issue bodies
 
