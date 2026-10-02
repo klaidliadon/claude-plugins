@@ -18,6 +18,12 @@ def stalled($r):
   .stall_after != null and $r.last_output_at != null and $r.agent_wait != true
   and (.now - ([$r.last_output_at, $r.dispatched_at] | max)) > .stall_after;
 def stopped($r): ($r.stopped // false) or $r.status == "blocked";
+# unreviewed_push: the PR head moved past both the last reviewed head and the head the latest worker reported.
+# It waits for the latest worker's pushed_head, so a running or unacked round never counts its own push.
+def unreviewed_push($w):
+  ([workers[] | .reviewed_head // empty] | last) as $rh
+  | $rh != null and $w.pushed_head != null and .pr.head != null
+    and .pr.head != $rh and .pr.head != $w.pushed_head;
 
 . as $t
 | (workers | last) as $w
@@ -39,6 +45,7 @@ def stopped($r): ($r.stopped // false) or $r.status == "blocked";
    elif (.deps_unmerged | length) > 0 then {state: "waiting", next: "blocked on \(.deps_unmerged | join(", ")) merge"}
    elif .pr.state == "MERGED" then {state: "merged", next: "propose cleanup"}
    elif .pr.state == "CLOSED" then {state: "closed", next: "closed unmerged: your call"}
+   elif $w.status == "completed" and unreviewed_push($w) then {state: "in-review", next: "new commits since review: inspect"}
    elif $l != null then
      (if stopped($l) then {state: "landing", next: "release stopped lander"}
       elif $l.status == "running" then {state: "landing", next: (if stalled($l) then "lander stalled: inspect" else "wait lander" end)}

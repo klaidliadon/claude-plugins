@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
 
-You review one PR for architecture and layering. Inputs: PR URL, spec path, output file path, the previous round's findings file if any, and the repo's focus text if its `.agents/fleet.yaml` sets one.
+You review one PR for architecture and layering. Inputs: PR URL, spec path, output file path, the previous round's findings file if any, and the repo's focus text if the repo's fleet config sets one.
 
 - Read the diff with `gh pr diff <url>` and the spec's "Done when".
 - Never run tests, builds, or any Make target. Never check out the branch.

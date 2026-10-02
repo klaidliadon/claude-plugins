@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/test/testlib.sh"
-source "$DIR/bin/lib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")"
+T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
+export FLEET_HOME="$T/fleet"
+source "$DIR/bin/lib.sh"
 export STUB_LOG="$T/log" STUB_GH_DIFF="$T/diff" STUB_GH_PR="$T/pr.json"
 echo '{"baseRefName":"main"}' >"$STUB_GH_PR"
 git init -q --bare "$T/origin.git"
@@ -19,6 +20,13 @@ PR=https://github.com/o/r/pull/7
 reviewers() {
   printf '%s\n' "$@" >"$STUB_GH_DIFF"
   fleet_reviewers "$T/repo" "$PR" | paste -sd, -
+}
+
+reviewers_in() {
+  local repo="$1"
+  shift
+  printf '%s\n' "$@" >"$STUB_GH_DIFF"
+  fleet_reviewers "$repo" "$PR" | paste -sd, -
 }
 
 assert_eq "$(reviewers apps/billing/rpc/session/login.go)" "adversarial,tests"
@@ -99,5 +107,45 @@ assert_eq "$(fleet_focus "$T/repo" "it's \"odd\"")" "quoted"
 assert_eq "$(fleet_focus "$T/repo" architecture)" "Check the gateway."
 assert_eq "$(fleet_focus "$T/repo" security)" ""
 assert_eq "$(fleet_focus "$T/nowhere" architecture)" ""
+
+git init -q "$T/cfg"
+assert_eq "$(fleet_repo_config "$T/cfg")" ""
+mkdir -p "$T/cfg/.agents" "$FLEET_HOME/repos/acme/widgets"
+echo 'review_skill: repo-review' >"$T/cfg/.agents/fleet.yaml"
+assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
+echo 'review_skill: my-review' >"$FLEET_HOME/repos/acme/widgets.yaml"
+assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
+git -C "$T/cfg" remote add origin https://github.com/acme/widgets.git
+for url in https://github.com/acme/widgets.git https://github.com/acme/widgets git@github.com:acme/widgets.git \
+  git@github.com:acme/widgets ssh://git@github.com/acme/widgets.git; do
+  git -C "$T/cfg" remote set-url origin "$url"
+  assert_eq "$(fleet_repo_config "$T/cfg")" "$FLEET_HOME/repos/acme/widgets.yaml"
+done
+assert_eq "$(yaml_get "$(fleet_repo_config "$T/cfg")" .review_skill)" "my-review"
+if command -v zsh >/dev/null; then
+  assert_eq "$(FLEET_HOME="$FLEET_HOME" zsh -c 'source "$1"; fleet_repo_config "$2"' _ "$DIR/bin/lib.sh" "$T/cfg")" "$FLEET_HOME/repos/acme/widgets.yaml"
+fi
+for url in https://github.com/acme/widgets/ git@github.com:widgets; do
+  git -C "$T/cfg" remote set-url origin "$url"
+  assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
+done
+git -C "$T/cfg" remote set-url origin git@github.com:acme/other.git
+assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
+git -C "$T/cfg" remote set-url origin git@github.com:acme/widgets.git
+rm "$T/cfg/.agents/fleet.yaml"
+assert_eq "$(fleet_repo_config "$T/cfg")" "$FLEET_HOME/repos/acme/widgets.yaml"
+rm "$FLEET_HOME/repos/acme/widgets.yaml"
+assert_eq "$(fleet_repo_config "$T/cfg")" ""
+
+printf 'reviewers:\n  architecture: ["**"]\nfocus:\n  architecture: "repo focus"\n' >"$T/cfg/.agents/fleet.yaml"
+assert_eq "$(reviewers_in "$T/cfg" pkg/pii/a.go)" "adversarial,tests,architecture"
+assert_eq "$(fleet_focus "$T/cfg" architecture)" "repo focus"
+printf 'reviewers:\n  security: ["**/pii/**"]\nfocus:\n  security: "my focus"\n' >"$FLEET_HOME/repos/acme/widgets.yaml"
+assert_eq "$(reviewers_in "$T/cfg" pkg/pii/a.go)" "adversarial,tests,security"
+assert_eq "$(fleet_focus "$T/cfg" security)" "my focus"
+assert_eq "$(fleet_focus "$T/cfg" architecture)" ""
+rm -r "$T/cfg/.agents" "$FLEET_HOME/repos"
+assert_eq "$(reviewers_in "$T/cfg" pkg/pii/a.go)" "adversarial,tests"
+assert_eq "$(fleet_focus "$T/cfg" security)" ""
 
 finish_tests reviewers

@@ -4,7 +4,7 @@ source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 
 setup() {
-  T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")"
+  T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
   export FLEET_HOME="$T/fleet" STUB_LOG="$T/log" STUB_GH_PR="$T/pr.json"
   git init -q --bare "$T/origin.git"
   git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
@@ -114,6 +114,36 @@ assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"; assert_fail test 
 
 setup; echo 'review_skill: review' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
+
+# The origin remote is $T/origin.git, so the personal file is repos/<basename of $T>/origin.yaml.
+personal() {
+  mkdir -p "$FLEET_HOME/repos/$(basename "$T")"
+  echo "$1" >"$FLEET_HOME/repos/$(basename "$T")/origin.yaml"
+}
+setup; rm "$T/repo/.agents/fleet.yaml"; personal 'cleanup: scripts/worktree-db-cleanup.sh'; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_ok test -f "$T/db-cleanup-called"
+
+setup; personal 'review_skill: review'; run_cleanup "$SPEC"
+assert_eq "$RC" 0; assert_not_contains "$OUT" "worktree-db-cleanup.sh $T/wt"
+assert_contains "$OUT" "note: $FLEET_HOME/repos/$(basename "$T")/origin.yaml sets no cleanup, so the committed hook"
+run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
+
+setup; printf '#!/usr/bin/env bash\n' >"$T/repo/scripts/personal-cleanup.sh"; chmod +x "$T/repo/scripts/personal-cleanup.sh"
+mkdir -p "$FLEET_HOME/repos/acme"; echo 'cleanup: scripts/personal-cleanup.sh' >"$FLEET_HOME/repos/acme/app.yaml"
+for url in https://github.com/acme/app.git git@github.com:acme/app.git; do
+  git -C "$T/repo" remote set-url origin "$url"; run_cleanup "$SPEC"
+  assert_eq "$RC" 0; assert_contains "$OUT" "/repo/scripts/personal-cleanup.sh $T/wt --apply"
+  assert_not_contains "$OUT" "worktree-db-cleanup"
+done
+git -C "$T/repo" remote remove origin
+git -C "$T/repo" update-ref refs/remotes/origin/main "$(git -C "$T/wt" rev-parse HEAD~1)"
+git -C "$T/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+run_cleanup "$SPEC"
+assert_eq "$RC" 0; assert_contains "$OUT" "/repo/scripts/worktree-db-cleanup.sh $T/wt --apply"
+
+setup; personal 'cleanup: [unclosed'; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cannot read $FLEET_HOME/repos/$(basename "$T")/origin.yaml"
 
 setup; echo 'cleanup: [unclosed' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cannot read"
