@@ -49,6 +49,9 @@ shown="$(orca worktree show --worktree "identity:$identity" --json | jq -r ".res
 cfg="$(fleet_repo_config "$primary")"
 hook="$(yaml_get "$cfg" .cleanup)" || refuse "cannot read $cfg"
 [ -z "$hook" ] || [ -x "$primary/$hook" ] || refuse "cleanup hook $hook is not executable"
+if [ -z "$hook" ] && [ "$cfg" != "$primary/.agents/fleet.yaml" ] && [ -n "$(yaml_get "$primary/.agents/fleet.yaml" .cleanup 2>/dev/null)" ]; then
+  echo "note: $cfg sets no cleanup, so the committed hook in $primary/.agents/fleet.yaml does not run"
+fi
 
 objtask="$(fm_get "$spec" '.objective')/$(fm_get "$spec" '.task')"
 if [ "$apply" = 0 ]; then

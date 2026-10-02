@@ -1317,7 +1317,7 @@
     }
   },
   {
-    "name": "head moved after a recorded fix round push",
+    "name": "head is the latest reviewed head, two rounds",
     "input": {
       "rounds": [
         {
@@ -1536,6 +1536,125 @@
     "want": {
       "state": "merged",
       "next": "propose cleanup"
+    }
+  },
+  {
+    "name": "push while the lander runs",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true,
+          "pushed_head": "aaa",
+          "reviewed_head": "aaa"
+        },
+        {
+          "round": 1,
+          "kind": "lander",
+          "status": "running",
+          "done_at": null
+        }
+      ],
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "pr": {
+        "number": 3697,
+        "state": "OPEN",
+        "ci": "success",
+        "approved": true,
+        "head": "ccc"
+      }
+    },
+    "want": {
+      "state": "in-review",
+      "next": "new commits since review: inspect"
+    }
+  },
+  {
+    "name": "lander runs on the reviewed head",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": true,
+          "pushed_head": "aaa",
+          "reviewed_head": "aaa"
+        },
+        {
+          "round": 1,
+          "kind": "lander",
+          "status": "running",
+          "done_at": null
+        }
+      ],
+      "reviews": {
+        "1": {
+          "adversarial": {
+            "critical": 0,
+            "important": 0,
+            "suggestion": 0
+          }
+        }
+      },
+      "pr": {
+        "number": 3697,
+        "state": "OPEN",
+        "ci": "success",
+        "approved": true,
+        "head": "aaa"
+      }
+    },
+    "want": {
+      "state": "landing",
+      "next": "wait lander"
+    }
+  },
+  {
+    "name": "PR head unknown",
+    "input": {
+      "rounds": [
+        {
+          "round": 1,
+          "kind": "worker",
+          "status": "completed",
+          "done_at": 1759312800,
+          "reviewers": [
+            "adversarial"
+          ],
+          "released": false,
+          "pushed_head": "aaa",
+          "reviewed_head": "aaa"
+        }
+      ],
+      "pr": {
+        "number": 3697,
+        "state": "OPEN",
+        "ci": "success",
+        "approved": false
+      }
+    },
+    "want": {
+      "state": "in-review",
+      "next": "start fix round 2"
     }
   }
 ]

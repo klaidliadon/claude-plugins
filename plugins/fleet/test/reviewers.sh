@@ -3,7 +3,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")"
+T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
 export FLEET_HOME="$T/fleet"
 source "$DIR/bin/lib.sh"
 export STUB_LOG="$T/log" STUB_GH_DIFF="$T/diff" STUB_GH_PR="$T/pr.json"
@@ -125,6 +125,10 @@ assert_eq "$(yaml_get "$(fleet_repo_config "$T/cfg")" .review_skill)" "my-review
 if command -v zsh >/dev/null; then
   assert_eq "$(FLEET_HOME="$FLEET_HOME" zsh -c 'source "$1"; fleet_repo_config "$2"' _ "$DIR/bin/lib.sh" "$T/cfg")" "$FLEET_HOME/repos/acme/widgets.yaml"
 fi
+for url in https://github.com/acme/widgets/ git@github.com:widgets; do
+  git -C "$T/cfg" remote set-url origin "$url"
+  assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
+done
 git -C "$T/cfg" remote set-url origin git@github.com:acme/other.git
 assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
 git -C "$T/cfg" remote set-url origin git@github.com:acme/widgets.git

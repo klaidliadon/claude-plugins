@@ -45,6 +45,7 @@ def unreviewed_push($w):
    elif (.deps_unmerged | length) > 0 then {state: "waiting", next: "blocked on \(.deps_unmerged | join(", ")) merge"}
    elif .pr.state == "MERGED" then {state: "merged", next: "propose cleanup"}
    elif .pr.state == "CLOSED" then {state: "closed", next: "closed unmerged: your call"}
+   elif $w.status == "completed" and unreviewed_push($w) then {state: "in-review", next: "new commits since review: inspect"}
    elif $l != null then
      (if stopped($l) then {state: "landing", next: "release stopped lander"}
       elif $l.status == "running" then {state: "landing", next: (if stalled($l) then "lander stalled: inspect" else "wait lander" end)}
@@ -57,7 +58,6 @@ def unreviewed_push($w):
      {state: $working, next: (if stalled($w) then "worker stalled: inspect" else "wait worker" end)}
    elif $w.status != "completed" then {state: "dispatched", next: "worker \($w.status): inspect"}
    elif .pr == null then {state: "dispatched", next: "worker done without PR: inspect"}
-   elif unreviewed_push($w) then {state: "in-review", next: "new commits since review: inspect"}
    elif (reviews_done($w) | not) then {state: "in-review", next: "run reviews round \($w.round)"}
    elif blocking($w) > 0 then
      (if $w.round >= 3 then {state: "in-review", next: "escalate: 3 rounds not clean"}

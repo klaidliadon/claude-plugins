@@ -4,7 +4,7 @@ source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 FX="$DIR/test/fixtures"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")"
+T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
 export FLEET_HOME="$T/fleet" STUB_LOG="$T/log" STUB_GH_PR="$FX/gh/pr-open.json"
 export STUB_ORCA_TASKS="$FX/orca/task-list-completed.json" STUB_ORCA_CHECK="$T/check-empty.json"
 echo '{"ok":true,"result":{"messages":[]}}' >"$STUB_ORCA_CHECK"
@@ -51,6 +51,8 @@ yq --front-matter=process -i '.orca[0].reviewed_head = "bbb"' "$TD/spec.md"
 out="$(STUB_GH_PR="$T/pr-head.json" "$DIR/bin/fleet-status" --tsv)"
 assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2'
 yq --front-matter=process -i 'del(.orca[0].pushed_head) | del(.orca[0].reviewed_head)' "$TD/spec.md"
+out="$(STUB_GH_PR="$T/pr-head.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2'
 
 STUB_ORCA_CHECK="$FX/orca/check-all.json" out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "1 ask"
