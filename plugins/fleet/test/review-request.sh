@@ -3,8 +3,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")"
-export FLEET_HOME="$T/fleet" STUB_LOG="$T/log" STUB_GH_PR="$T/pr.json" STUB_GH_USER="$T/user.json"
+export STUB_LOG="$T/log" STUB_GH_PR="$T/pr.json" STUB_GH_USER="$T/user.json"
 echo '{"login":"me"}' >"$STUB_GH_USER"
 RR="$DIR/bin/fleet-review-request"
 PR=https://github.com/o/app/pull/12
@@ -105,11 +104,96 @@ rmdir "$FLEET_HOME/reviews/.lock-o+web+8"
 add https://github.com/o/web/pull/8
 assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+8/spec.md"
 assert_fail test -e "$FLEET_HOME/reviews/.lock-o+web+8"
+# A lock older than FLEET_LOCK_TTL is stale: add takes it over instead of failing.
+mkdir "$FLEET_HOME/reviews/.lock-o+web+10"
+touch -t 202001010000 "$FLEET_HOME/reviews/.lock-o+web+10"
+add https://github.com/o/web/pull/10
+assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+10/spec.md"
+assert_fail test -e "$FLEET_HOME/reviews/.lock-o+web+10"
+mkdir "$FLEET_HOME/reviews/.lock-o+web+11"
+touch -t "$(date -v-2M +%Y%m%d%H%M 2>/dev/null || date -d '-2 min' +%Y%m%d%H%M)" "$FLEET_HOME/reviews/.lock-o+web+11"
+FLEET_LOCK_TTL=600 add https://github.com/o/web/pull/11
+assert_eq "$RC" 1; assert_contains "$OUT" ".lock-o+web+11 is held"
+FLEET_LOCK_TTL=60 add https://github.com/o/web/pull/11
+assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+11/spec.md"
 
 yq -i '.review_requests.skip.already_reviewer = true' "$FLEET_HOME/config.yaml"
 STUB_GH_FAIL="api user" add https://github.com/o/web/pull/9
 assert_eq "$RC" 1; assert_fail test -e "$FLEET_HOME/reviews/o+web+9"
 assert_fail test -e "$FLEET_HOME/reviews/.lock-o+web+9"
+
+# Two concurrent creators of the reviews Run: exactly one run-create, and both print the same id.
+export STUB_ORCA_RUNS="$T/runs.json" STUB_ORCA_CREATE="$DIR/test/fixtures/orca/run-create.json"
+echo '{"ok":true,"result":{"runs":[],"nextCursor":null}}' >"$STUB_ORCA_RUNS"
+: >"$STUB_LOG"
+STUB_ORCA_CREATE_SLEEP=1 "$RR" run >"$T/run-a" 2>&1 &
+STUB_ORCA_CREATE_SLEEP=1 "$RR" run >"$T/run-b" 2>&1 &
+wait
+assert_eq "$(grep -c 'run-create' "$STUB_LOG")" 1
+assert_eq "$(cat "$T/run-a")" run_000000000001
+assert_eq "$(cat "$T/run-b")" run_000000000001
+assert_eq "$(cat "$FLEET_HOME/reviews/run.id")" run_000000000001
+assert_contains "$(cat "$STUB_LOG")" "run-create --objective reviews $FLEET_HOME --json"
+assert_fail test -e "$FLEET_HOME/reviews/.run.lock"
+: >"$STUB_LOG"
+assert_eq "$("$RR" run)" run_000000000001
+assert_not_contains "$(cat "$STUB_LOG")" "orca"
+# Without run.id, an existing Run with this fleet's objective is adopted, the oldest when there are several.
+rm "$FLEET_HOME/reviews/run.id"
+jq -n --arg o "reviews $FLEET_HOME" '{ok: true, result: {runs: [
+  {id: "run_000000000003", objective: $o, created_at: "2026-10-02T00:00:00Z"},
+  {id: "run_000000000002", objective: $o, created_at: "2026-10-01T00:00:00Z"},
+  {id: "run_000000000004", objective: "reviews /elsewhere", created_at: "2026-09-01T00:00:00Z"}]}}' >"$STUB_ORCA_RUNS"
+OUT="$("$RR" run 2>"$T/err")"
+assert_eq "$OUT" run_000000000002
+assert_contains "$(cat "$T/err")" "2 Runs are named"
+assert_not_contains "$(cat "$STUB_LOG")" "run-create"
+rm "$FLEET_HOME/reviews/run.id"
+echo '{"ok":false,"error":{"code":"x"}}' >"$STUB_ORCA_RUNS"
+OUT="$("$RR" run 2>&1)"
+assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: orca run-list failed"
+assert_fail test -e "$FLEET_HOME/reviews/run.id"
+echo '{"ok":true,"result":{"runs":[]}}' >"$STUB_ORCA_RUNS"
+echo '{"ok":false,"error":{"code":"x"}}' >"$T/create-fail.json"
+OUT="$(STUB_ORCA_CREATE="$T/create-fail.json" "$RR" run 2>&1)"
+assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: orca run-create failed"
+assert_fail test -e "$FLEET_HOME/reviews/run.id"
+
+# run takes over a stale .run.lock.
+rm -f "$FLEET_HOME/reviews/run.id"
+mkdir "$FLEET_HOME/reviews/.run.lock"
+touch -t 202001010000 "$FLEET_HOME/reviews/.run.lock"
+assert_eq "$("$RR" run)" run_000000000001
+assert_fail test -e "$FLEET_HOME/reviews/.run.lock"
+
+# Two contenders against one stale lock: exactly one takes it, and the loser's release never removes it.
+# A stat stub that answers late makes both read the lock as stale before either breaks it.
+source "$DIR/bin/lib.sh"
+mkdir -p "$T/slowstat"
+printf '#!/usr/bin/env bash\nout="$(%s "$@")"; rc=$?\nsleep 0.3\nprintf "%%s\\n" "$out"\nexit $rc\n' "$(command -v stat)" >"$T/slowstat/stat"
+chmod +x "$T/slowstat/stat"
+for i in 1 2 3; do
+  L="$T/race-$i"
+  mkdir "$L"
+  touch -t 202001010000 "$L"
+  for c in a b; do
+    (PATH="$T/slowstat:$PATH"; lock_take "$L" && { echo "$c" >>"$T/race-$i.won"; sleep 1; }; lock_release "$L") &
+  done
+  wait
+  assert_eq "$(wc -l <"$T/race-$i.won" | tr -d ' ')" 1
+done
+L="$T/owned"
+lock_take "$L"
+mine="$LOCK_OWNER"
+LOCK_OWNER=someone-else lock_release "$L"
+assert_ok test -d "$L"
+LOCK_OWNER="$mine" lock_release "$L"
+assert_fail test -e "$L"
+# A crash mid-takeover leaves a stale breaker; the next taker clears it.
+mkdir "$L" "$L.break"
+touch -t 202001010000 "$L" "$L.break"
+assert_ok lock_take "$L"
+assert_fail test -e "$L.break"
 
 echo '[1]' >"$FLEET_HOME/review-requests.cursor"
 assert_fail "$RR" cursor "#team" 1759316400.000300 2>/dev/null

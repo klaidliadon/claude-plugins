@@ -21,6 +21,11 @@ case "$1 $2" in
     fi
     cat "$STUB_ORCA_CHECK"
     ;;
+  "orchestration run-list") cat "${STUB_ORCA_RUNS:-/dev/null}" ;;
+  "orchestration run-create")
+    sleep "${STUB_ORCA_CREATE_SLEEP:-0}"
+    cat "$STUB_ORCA_CREATE"
+    ;;
   "orchestration worker-show")
     [ -n "${STUB_ORCA_WORKER_SHOW:-}" ] || exit 1
     cat "$STUB_ORCA_WORKER_SHOW"

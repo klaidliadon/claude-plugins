@@ -4,8 +4,7 @@ source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 FX="$DIR/test/fixtures"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
-export FLEET_HOME="$T/fleet" STUB_LOG="$T/log" STUB_GH_PR="$FX/gh/pr-open.json"
+export STUB_LOG="$T/log" STUB_GH_PR="$FX/gh/pr-open.json"
 export STUB_ORCA_TASKS="$FX/orca/task-list-completed.json" STUB_ORCA_CHECK="$T/check-empty.json"
 echo '{"ok":true,"result":{"messages":[]}}' >"$STUB_ORCA_CHECK"
 TD="$FLEET_HOME/obj/1-api"
@@ -67,6 +66,61 @@ for fx in pr-status-failure pr-cancelled; do
 done
 STUB_GH_PR="$FX/gh/pr-status-pending.json" out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "⏳"
+
+# CI: the first failure on a head reruns the failed job; a second failure on the same head starts a fix round.
+jq '.headRefOid = "h1" | .statusCheckRollup = [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "FAILURE",
+  "detailsUrl": "https://github.com/o/r/actions/runs/42/job/9"}]' "$FX/gh/pr-open.json" >"$T/pr-ci-fail.json"
+printf '<!-- counts: critical=0 important=0 suggestion=0 -->\n' >"$TD/review-1-tests.md"
+out="$(STUB_GH_PR="$T/pr-ci-fail.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\trerun failed job: test\tfalse'
+yq --front-matter=process -i '.orca[0].ci_rerun = "h1"' "$TD/spec.md"
+out="$(STUB_GH_PR="$T/pr-ci-fail.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2 with CI log'
+jq '.headRefOid = "h2"' "$T/pr-ci-fail.json" >"$T/pr-ci-fail-h2.json"
+out="$(STUB_GH_PR="$T/pr-ci-fail-h2.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\trerun failed job: test'
+STUB_GH_PR="$FX/gh/pr-status-failure.json" out="$("$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2 with CI log'
+yq --front-matter=process -i 'del(.orca[0].ci_rerun)' "$TD/spec.md"
+printf '<!-- counts: critical=0 important=2 suggestion=1 -->\n' >"$TD/review-1-tests.md"
+
+# gh: a 5xx or a non-JSON reply is retried once; a second bad reply is one clear error.
+export FLEET_RETRY_SLEEP=0 STUB_GH_QUEUE="$T/gh-queue"
+for first in 5xx html; do
+  echo "$first" >"$STUB_GH_QUEUE"
+  out="$("$DIR/bin/fleet-status" --tsv 2>"$T/err")"
+  assert_eq "$?" 0
+  assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2'
+  assert_eq "$(cat "$T/err")" ""
+done
+printf '5xx\nhtml\n' >"$STUB_GH_QUEUE"
+"$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
+assert_eq "$?" 1
+assert_eq "$(cat "$T/err")" "fleet-status: gh pr view https://github.com/o/r/pull/7 failed: non-JSON reply"
+printf '5xx\n5xx\n' >"$STUB_GH_QUEUE"
+"$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
+assert_eq "$?" 1
+assert_eq "$(cat "$T/err")" "fleet-status: gh pr view https://github.com/o/r/pull/7 failed: HTTP 502: Bad Gateway (https://api.github.com/graphql)"
+: >"$STUB_LOG"
+STUB_GH_FAIL="pr view" "$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
+assert_eq "$?" 1
+assert_eq "$(grep -c 'gh pr view' "$STUB_LOG")" 1
+assert_eq "$(cat "$T/err")" "fleet-status: gh pr view https://github.com/o/r/pull/7 failed: no output"
+# The dependency lookup retries the same way.
+mkdir -p "$FLEET_HOME/obj/2-web"
+printf -- '---\nobjective: obj\ntask: 2-web\nrepo: app\napproved_at: "2026-09-30T19:00:00Z"\ndepends_on: [1-api]\n---\nbody\n' >"$FLEET_HOME/obj/2-web/spec.md"
+echo '{"state":"OPEN"}' >"$T/dep-open.json"
+printf '%s\n' "$FX/gh/pr-open.json" 5xx "$T/dep-open.json" >"$STUB_GH_QUEUE"
+out="$("$DIR/bin/fleet-status" --tsv 2>"$T/err")"
+assert_eq "$?" 0
+assert_contains "$out" $'obj\t2-web\twaiting\tblocked on 1-api merge'
+assert_eq "$(cat "$T/err")" ""
+printf '%s\n' "$FX/gh/pr-open.json" 5xx 5xx >"$STUB_GH_QUEUE"
+"$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
+assert_eq "$?" 1
+assert_eq "$(cat "$T/err")" "fleet-status: gh pr view https://github.com/o/r/pull/7 failed: HTTP 502: Bad Gateway (https://api.github.com/graphql)"
+rm -r "$FLEET_HOME/obj/2-web"
+unset STUB_GH_QUEUE
 
 STUB_ORCA_FAIL=1 "$DIR/bin/fleet-status" >/dev/null 2>"$T/err"
 assert_eq "$?" 1
@@ -163,7 +217,7 @@ export STUB_ORCA_CHECK="$T/check-empty.json"
 printf 'review_requests:\n  sources:\n    - slack: "#team"\n      repos: [o/app]\n' >"$FLEET_HOME/config.yaml"
 "$DIR/bin/fleet-review-request" add "#team" https://github.com/o/app/pull/7 alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 >/dev/null
 RS="$FLEET_HOME/reviews/o+app+7/spec.md"
-review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\to+app+7\t'; }
+review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\to+app+7\t' | cut -f1-4; }
 assert_eq "$(review_next)" $'reviews\to+app+7\treview\task review'
 for a in later no; do
   yq --front-matter=process -i ".answer = \"$a\"" "$RS"
@@ -174,6 +228,7 @@ assert_eq "$(review_next)" $'reviews\to+app+7\treview\tstart review session'
 echo run_000000000001 >"$FLEET_HOME/reviews/run.id"
 yq --front-matter=process -i '.session = {"task_id": "task_000000000006", "dispatch_id": "ctx_000000000007", "terminal": "term_x", "worktree_path": "/w"}' "$RS"
 assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" review_next)" $'reviews\to+app+7\treview\twait review session'
+assert_contains "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" "$DIR/bin/fleet-status" --tsv)" $'wait review session\ttrue'
 out="$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_CHECK="$FX/orca/check-all.json" "$DIR/bin/fleet-status")"
 assert_contains "$(grep o+app+7 <<<"$out")" "answer question"
 assert_eq "$(STUB_ORCA_TASKS="$FX/orca/task-list-running.json" STUB_ORCA_WORKER_SHOW="$FX/orca/worker-show-stale.json" review_next)" $'reviews\to+app+7\treview\treview session stalled: inspect'

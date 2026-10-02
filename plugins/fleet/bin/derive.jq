@@ -62,6 +62,8 @@ def unreviewed_push($w):
    elif blocking($w) > 0 then
      (if $w.round >= 3 then {state: "in-review", next: "escalate: 3 rounds not clean"}
       else {state: "in-review", next: ("start fix round \($w.round + 1)" + (if stale($w) then " (fresh agent)" else "" end))} end)
+   elif .pr.ci == "failure" and .pr.failed.run != null and $w.ci_rerun != .pr.head then
+     {state: "in-review", next: "rerun failed job: \(.pr.failed.job)"}
    elif .pr.ci == "failure" then
      (if $w.round >= 3 then {state: "in-review", next: "escalate: 3 rounds not clean"}
       else {state: "in-review", next: ("start fix round \($w.round + 1) with CI log" + (if ($w.released // false) or stale($w) then " (fresh agent)" else "" end))} end)
@@ -73,6 +75,7 @@ def unreviewed_push($w):
     objective: $t.objective, task: $t.task, repo: $t.repo,
     pr: (if $t.pr == null then "-" else "#\($t.pr.number)" end),
     state: $d.state,
+    live: ([.rounds[]?.status, .session.status] | any(. == "running")),
     ci: ({success: "✅", failure: "❌", pending: "⏳"}[$t.pr.ci // "none"] // "-"),
     review: review_cell($shown),
     inbox: (if $t.fenced // false then "fenced" elif $t.asks > 0 then "\($t.asks) ask" else "-" end),

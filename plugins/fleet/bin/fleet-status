@@ -30,17 +30,44 @@ reviews_json() {
   printf '%s' "$acc"
 }
 
+GH_ERR="$(mktemp "${TMPDIR:-/tmp}/fleet-status.XXXXXX")"
+trap 'rm -f "$GH_ERR"' EXIT
+
+# gh_json prints the JSON object `gh <args>` replies with. A 5xx or a non-JSON reply is retried once after
+# FLEET_RETRY_SLEEP seconds (default 2); any other failure, or a second bad reply, prints one error and returns 1.
+gh_json() {
+  local out err try
+  for try in 1 2; do
+    if out="$(gh "$@" 2>"$GH_ERR")"; then
+      jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out" && { printf '%s\n' "$out"; return 0; }
+      err="non-JSON reply"
+    else
+      err="$(tail -1 "$GH_ERR")"
+      grep -qE 'HTTP 5[0-9]{2}' "$GH_ERR" || break
+    fi
+    [ "$try" = 2 ] || sleep "${FLEET_RETRY_SLEEP:-2}"
+  done
+  echo "fleet-status: gh $1 $2 $3 failed: ${err:-no output}" >&2
+  return 1
+}
+
+# pr_json's failed is the first failing check: its job name, and its Actions run id when it has one.
 pr_json() {
+  local raw
   [ -n "$1" ] || { echo null; return; }
-  gh pr view "$1" --json number,state,headRefOid,statusCheckRollup,reviewDecision | jq -c '{
+  raw="$(gh_json pr view "$1" --json number,state,headRefOid,statusCheckRollup,reviewDecision)" || return 1
+  jq -c '["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] as $bad | {
     number, state, head: .headRefOid,
     approved: (.reviewDecision == "APPROVED"),
     ci: ((.statusCheckRollup // []) as $c
       | if ($c | length) == 0 then "none"
-        elif any($c[]; (.conclusion // .state // "") as $s | ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"] | index($s)) then "failure"
+        elif any($c[]; (.conclusion // .state // "") as $s | $bad | index($s)) then "failure"
         elif any($c[]; (.status // .state // "") as $s | ["QUEUED", "IN_PROGRESS", "PENDING", "EXPECTED", "WAITING", "REQUESTED"] | index($s)) then "pending"
-        else "success" end)
-  }'
+        else "success" end),
+    failed: ([(.statusCheckRollup // [])[] | select((.conclusion // .state // "") as $s | $bad | index($s))] | first
+      | if . == null then null
+        else {job: (.name // .context), run: ((.detailsUrl // .targetUrl // "") | capture("/actions/runs/(?<r>[0-9]+)").r // null)} end)
+  }' <<<"$raw"
 }
 
 # orca_call prints .result; it returns 3 when this terminal is fenced from the Run.
@@ -111,9 +138,13 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
   for dep in $(fm_get "$spec" '.depends_on[]'); do
     dpr="$(fm_get "$objdir/$dep/spec.md" '.pr')"
     dstate=NONE
-    [ -z "$dpr" ] || dstate="$(gh pr view "$dpr" --json state -q .state)"
+    if [ -n "$dpr" ]; then
+      dstate="$(gh_json pr view "$dpr" --json state)" || exit 1
+      dstate="$(jq -r .state <<<"$dstate")"
+    fi
     [ "$dstate" = MERGED ] || unmerged="$(jq -c --arg d "$dep" '. + [$d]' <<<"$unmerged")"
   done
+  pr="$(pr_json "$(fm_get "$spec" '.pr')")" || exit 1
   reviewed=false
   [ ! -f "$dir/spec-review.md" ] || reviewed=true
   rows+=("$(jq -c -n \
@@ -121,7 +152,7 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
     --argjson activity "$activity" --argjson fenced "$fenced" --arg run "$run" \
     --argjson stall_after "$((10#$stall_min * 60))" \
     --argjson reviews "$(reviews_json "$dir")" \
-    --argjson pr "$(pr_json "$(fm_get "$spec" '.pr')")" \
+    --argjson pr "$pr" \
     --argjson unmerged "$unmerged" --argjson reviewed "$reviewed" \
     --argjson now "$(date +%s)" '{
       objective: $fm.objective, task: $fm.task, repo: $fm.repo,
@@ -137,7 +168,7 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
 done
 
 if [ "${1:-}" = "--tsv" ]; then
-  for r in ${rows[@]+"${rows[@]}"}; do jq -r '[.objective, .task, .state, .next] | @tsv' <<<"$r"; done
+  for r in ${rows[@]+"${rows[@]}"}; do jq -r '[.objective, .task, .state, .next, .live] | @tsv' <<<"$r"; done
   exit 0
 fi
 {

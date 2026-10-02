@@ -3,6 +3,12 @@ set -uo pipefail
 
 FAILS=0
 
+# Every test gets a fresh scratch FLEET_HOME. Without one, the fleet scripts would fall back to the real
+# ~/Workspace/.fleet, so a failed mktemp aborts the test before anything can write.
+T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX" 2>/dev/null)" || T=""
+[ -n "$T" ] && [ -d "$T" ] || { echo "testlib: mktemp -d failed; refusing to run without a scratch FLEET_HOME" >&2; exit 1; }
+export FLEET_HOME="$T/fleet"
+
 fail() {
   echo "FAIL: $*"
   FAILS=$((FAILS + 1))

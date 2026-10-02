@@ -2,9 +2,10 @@
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
+ROOT="$T"
 
 setup() {
-  T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
+  T="$(mktemp -d "$ROOT/case.XXXXXX")" || exit 1
   export FLEET_HOME="$T/fleet" STUB_LOG="$T/log" STUB_GH_PR="$T/pr.json"
   git init -q --bare "$T/origin.git"
   git clone -q "$T/origin.git" "$T/repo" 2>/dev/null
