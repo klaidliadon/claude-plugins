@@ -9,9 +9,9 @@ for h in aaa bbb ccc; do echo "{\"headRefOid\":\"$h\"}" >"$T/head-$h.json"; echo
 S="$T/s" D="$T/s/round.diff"
 mkdir -p "$S"
 queue() { printf "$T/%s\n" "$@" >"$STUB_GH_QUEUE"; }
-# fingerprint lists every path under the task directory with its link target or content.
+# fingerprint lists every path under the task directory, or under $1, with its link target or content.
 fingerprint() {
-  (cd "$S" && find . | LC_ALL=C sort | while IFS= read -r p; do
+  (cd "${1:-$S}" && find . | LC_ALL=C sort | while IFS= read -r p; do
     if [ -L "$p" ]; then echo "$p -> $(readlink "$p")"; elif [ -f "$p" ]; then echo "$p: $(cat "$p")"; else echo "$p/"; fi
   done)
 }
@@ -58,11 +58,14 @@ chmod +x "$T/bin/mktemp"
 queue head-bbb.json diff-bbb names-bbb head-bbb.json
 PATH="$T/bin:$PATH" failed
 rm "$T/bin/mktemp"
-# mv refuses, or kills its caller, when its last argument ends in $STUB_MV_ON.
+# mv refuses, or kills its caller, when its last argument ends in $STUB_MV_ON; with STUB_MV_NTH, only on that match.
 cat >"$T/bin/mv" <<SH
 #!/usr/bin/env bash
 case "\${@: -1}" in
-  *"\$STUB_MV_ON") [ "\$STUB_MV_KILL" = 1 ] && kill -9 \$PPID; exit 1 ;;
+  *"\$STUB_MV_ON")
+    n=\$((\$(cat "$T/mv.n" 2>/dev/null || echo 0) + 1)); echo "\$n" >"$T/mv.n"
+    [ -z "\$STUB_MV_NTH" ] || [ "\$n" = "\$STUB_MV_NTH" ] || exec $(command -v mv) "\$@"
+    [ "\$STUB_MV_KILL" = 1 ] && kill -9 \$PPID; exit 1 ;;
 esac
 exec $(command -v mv) "\$@"
 SH
@@ -70,6 +73,9 @@ chmod +x "$T/bin/mv"
 queue head-bbb.json diff-bbb names-bbb head-bbb.json
 PATH="$T/bin:$PATH" STUB_MV_ON=round.diff.snap.bbb failed
 queue head-bbb.json diff-bbb names-bbb head-bbb.json
+PATH="$T/bin:$PATH" STUB_MV_ON=round.diff.snap failed
+# The same failed swap on a re-capture of the published head keeps that head's directory, which readers still use.
+queue head-aaa.json diff-aaa names-aaa head-aaa.json
 PATH="$T/bin:$PATH" STUB_MV_ON=round.diff.snap failed
 # Killed just before the swap: readers still see the old capture, and the next call clears what the crash left.
 queue head-bbb.json diff-bbb names-bbb head-bbb.json
@@ -94,23 +100,44 @@ assert_eq "$(pr_snapshot "$PR" "$D")" "bbb"
 reads_capture bbb
 assert_eq "$(ls -A "$S" | LC_ALL=C sort | tr '\n' ' ')" "round.diff round.diff.names round.diff.snap round.diff.snap.bbb "
 
-# A snapshot written as two plain files by an older fleet becomes the symlink layout.
+# A snapshot written as two plain files by an older fleet becomes the symlink layout. A failure at any step, a
+# reader link, the bootstrap's .snap link or the swap after it, leaves every path as it was.
 M="$T/m/round.diff"
 mkdir -p "$T/m"
 echo old >"$M"; echo old.go >"$M.names"
+mbefore="$(fingerprint "$T/m")"
+for f in /m/round.diff:1 /m/round.diff.names:1 /m/round.diff.snap:1 /m/round.diff.snap:2; do
+  rm -f "$T/mv.n"
+  queue head-ccc.json diff-ccc names-ccc head-ccc.json
+  out="$(PATH="$T/bin:$PATH" STUB_MV_ON="${f%:*}" STUB_MV_NTH="${f##*:}" pr_snapshot "$PR" "$M" 2>&1)"
+  assert_eq "$?" 1
+  assert_eq "$(fingerprint "$T/m")" "$mbefore"
+done
 queue head-ccc.json diff-ccc names-ccc head-ccc.json
 assert_eq "$(pr_snapshot "$PR" "$M")" "ccc"
 assert_eq "$(readlink "$M")" round.diff.snap/diff
 assert_eq "$(cat "$M" "$M.names")" $'diff at ccc\npath-ccc.go'
-# A failed reader link fails the call; the next call creates it.
+# A first capture that fails at a reader link or at .snap leaves nothing; the next call creates them.
 N="$T/n/round.diff"
 mkdir -p "$T/n"
-queue head-ccc.json diff-ccc names-ccc head-ccc.json
-out="$(PATH="$T/bin:$PATH" STUB_MV_ON=/n/round.diff pr_snapshot "$PR" "$N" 2>&1)"
-assert_eq "$?" 1
-assert_fail test -e "$N"
+for f in /n/round.diff /n/round.diff.names /n/round.diff.snap; do
+  queue head-ccc.json diff-ccc names-ccc head-ccc.json
+  out="$(PATH="$T/bin:$PATH" STUB_MV_ON="$f" pr_snapshot "$PR" "$N" 2>&1)"
+  assert_eq "$?" 1
+  assert_eq "$(ls -A "$T/n")" ""
+done
 queue head-ccc.json diff-ccc names-ccc head-ccc.json
 assert_eq "$(pr_snapshot "$PR" "$N")" "ccc"
 assert_eq "$(cat "$N")" "diff at ccc"
+
+# fleet_rename uses GNU mv -T when mv answers --version, else BSD mv -h.
+for v in gnu:0 bsd:1; do
+  mkdir -p "$T/${v%:*}"
+  printf '#!/usr/bin/env bash\n[ "$1" != --version ] || exit %s\necho "$*" >>"%s"\n' "${v##*:}" "$T/mv-${v%:*}.log" >"$T/${v%:*}/mv"
+  chmod +x "$T/${v%:*}/mv"
+  PATH="$T/${v%:*}:$PATH" fleet_rename a b
+done
+assert_eq "$(cat "$T/mv-gnu.log")" "-fT a b"
+assert_eq "$(cat "$T/mv-bsd.log")" "-fh a b"
 
 finish_tests snapshot
