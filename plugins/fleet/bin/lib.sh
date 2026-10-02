@@ -32,11 +32,13 @@ fleet_config() {
 
 # fleet_repo_config prints the fleet.yaml for <repo-path>: $FLEET_HOME/repos/<owner>/<repo>.yaml, named after the origin
 # remote, else <repo-path>/.agents/fleet.yaml, else nothing. The first file found wins; the two are never merged.
+# The manager sources this file from zsh, so it parses the URL with expansions both shells share, not BASH_REMATCH.
 fleet_repo_config() {
-  local url personal
-  if url="$(git -C "$1" remote get-url origin 2>/dev/null)" && [[ "$url" =~ [:/]([^/:]+)/([^/]+)$ ]]; then
-    personal="$FLEET_HOME/repos/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}.yaml"
-    [ ! -f "$personal" ] || { printf '%s\n' "$personal"; return 0; }
+  local url repo owner
+  if url="$(git -C "$1" remote get-url origin 2>/dev/null)"; then
+    url="${url%.git}" repo="${url##*/}" url="${url%/*}" owner="${url##*[:/]}"
+    [ -z "$owner" ] || [ -z "$repo" ] || [ ! -f "$FLEET_HOME/repos/$owner/$repo.yaml" ] ||
+      { printf '%s\n' "$FLEET_HOME/repos/$owner/$repo.yaml"; return 0; }
   fi
   [ ! -f "$1/.agents/fleet.yaml" ] || printf '%s\n' "$1/.agents/fleet.yaml"
 }

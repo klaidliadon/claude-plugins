@@ -122,6 +122,9 @@ for url in https://github.com/acme/widgets.git https://github.com/acme/widgets g
   assert_eq "$(fleet_repo_config "$T/cfg")" "$FLEET_HOME/repos/acme/widgets.yaml"
 done
 assert_eq "$(yaml_get "$(fleet_repo_config "$T/cfg")" .review_skill)" "my-review"
+if command -v zsh >/dev/null; then
+  assert_eq "$(FLEET_HOME="$FLEET_HOME" zsh -c 'source "$1"; fleet_repo_config "$2"' _ "$DIR/bin/lib.sh" "$T/cfg")" "$FLEET_HOME/repos/acme/widgets.yaml"
+fi
 git -C "$T/cfg" remote set-url origin git@github.com:acme/other.git
 assert_eq "$(fleet_repo_config "$T/cfg")" "$T/cfg/.agents/fleet.yaml"
 git -C "$T/cfg" remote set-url origin git@github.com:acme/widgets.git
