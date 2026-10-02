@@ -28,4 +28,7 @@ for i in $(seq 0 $((n - 1))); do
     *) row_for "$next" || fail "$name: SKILL.md has no action row for '$next'" ;;
   esac
 done
+# fleet-status --json prints these rows, plus pr_url, and fleet-checkpoint reads them.
+assert_eq "$(jq -c -f "$DIR/bin/derive.jq" <<<"$base" | jq -c 'keys_unsorted')" '["objective","task","repo","pr","state","live","ci","review","inbox","next"]'
+assert_eq "$(jq -c -f "$DIR/bin/derive.jq" <<<"$base" | jq -c '[.pr, (.live | type)]')" '["#3697","boolean"]'
 finish_tests derive

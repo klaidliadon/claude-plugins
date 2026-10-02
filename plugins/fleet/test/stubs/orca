@@ -26,6 +26,15 @@ case "$1 $2" in
     sleep "${STUB_ORCA_CREATE_SLEEP:-0}"
     cat "$STUB_ORCA_CREATE"
     ;;
+  "orchestration run-use") cat "${STUB_ORCA_RUN_USE:-/dev/null}"; exit "${STUB_ORCA_RUN_USE_EXIT:-0}" ;;
+  "orchestration run-current") cat "${STUB_ORCA_RUN_CURRENT:-/dev/null}"; exit "${STUB_ORCA_RUN_CURRENT_EXIT:-0}" ;;
+  "terminal create")
+    printf '%s\n' "$@" >"$STUB_LOG.create"
+    cat "${STUB_ORCA_TERM_CREATE:-/dev/null}"
+    exit "${STUB_ORCA_TERM_CREATE_EXIT:-0}"
+    ;;
+  "terminal wait") cat "${STUB_ORCA_TERM_WAIT:-/dev/null}"; exit "${STUB_ORCA_TERM_WAIT_EXIT:-0}" ;;
+  "terminal close") cat "${STUB_ORCA_TERM_CLOSE:-/dev/null}"; exit "${STUB_ORCA_TERM_CLOSE_EXIT:-0}" ;;
   "orchestration worker-show")
     [ -n "${STUB_ORCA_WORKER_SHOW:-}" ] || exit 1
     cat "$STUB_ORCA_WORKER_SHOW"

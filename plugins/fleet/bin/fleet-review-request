@@ -22,7 +22,8 @@ case "${1:-}" in
     if [ ! -s "$id_file" ]; then
       # run-list has no page token (--cursor is a line cursor for new output), so a full list may hide a match.
       limit=500
-      out="$(orca orchestration run-list --limit "$limit" --json)" && jq -e '.ok == true' >/dev/null 2>&1 <<<"$out" ||
+      out="$(orca orchestration run-list --limit "$limit" --json)" &&
+        jq -e '.ok == true and (.result.runs | type) == "array"' >/dev/null 2>&1 <<<"$out" ||
         { echo "fleet-review-request: orca run-list failed" >&2; exit 1; }
       runs="$(o="$objective" jq -c '[.result.runs[]? | select(.objective == env.o)] | sort_by(.created_at)' <<<"$out")"
       id="$(jq -r '.[0].id // empty' <<<"$runs")"

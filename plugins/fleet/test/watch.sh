@@ -213,4 +213,12 @@ for c in false "cat $T/tsv"; do
   assert_eq "$?" 1; assert_contains "$(cat "$T/err")" "fleet-watch: cannot write state"
 done
 chmod 755 "$T/ro"
+# A failure marker the watch cannot remove would hide the next failure, so it exits instead. A non-empty directory
+# at the marker's path makes the removal fail for every user, root included.
+printf 'review_requests:\n  sources: [{slack: C0TEAM, repos: [o/r]}]\n' >"$FLEET_HOME/config.yaml"
+for marker in failed config-failed; do
+  mkdir -p "$T/stuck-$marker.$marker/x"
+  FLEET_STATUS_CMD="cat $T/tsv" "$DIR/bin/fleet-watch" --once --state "$T/stuck-$marker" >/dev/null 2>"$T/err"
+  assert_eq "$?" 1; assert_eq "$(tail -1 "$T/err")" "fleet-watch: cannot write state"
+done
 finish_tests watch

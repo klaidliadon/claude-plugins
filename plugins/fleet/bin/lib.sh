@@ -12,6 +12,9 @@ fm_set() {
   yq --front-matter=process -i "$2" "$1"
 }
 
+# FLEET_GATED_NEXT matches every NEXT that waits on the user. It is an ERE that awk and jq read alike.
+FLEET_GATED_NEXT='^(await your go|needs human approval|closed unmerged: your call|propose cleanup|blocked on .* merge|escalate: .*|rebind: .*|.*inspect)$'
+
 ledger_append() {
   mkdir -p "$FLEET_HOME"
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"$FLEET_HOME/ledger.md"
@@ -105,7 +108,7 @@ fleet_reviewers() {
 # the head. Readers use <diff-path> and <diff-path>.names, fixed symlinks into the <diff-path>.snap symlink, which one
 # rename points at a finished capture: both paths always name the same capture, and a failed one changes nothing.
 pr_snapshot() {
-  local dir base stage head snap created=0
+  local dir base stage head snap created=0 boot=0
   dir="$(dirname "$2")" base="$(basename "$2")"
   find "$dir" -maxdepth 1 -name "$base.stage.*" -exec rm -rf {} + 2>/dev/null
   stage="$(mktemp -d "$2.stage.XXXXXX")" && [ -n "$stage" ] || return 1
@@ -117,12 +120,72 @@ pr_snapshot() {
     mv "$stage" "$dir/$snap" || { rm -rf "$stage"; return 1; }
     created=1
   fi
-  ln -s "$snap" "$stage.lnk" && fleet_rename "$stage.lnk" "$2.snap" ||
-    { rm -f "$stage.lnk"; [ "$created" = 0 ] || rm -rf "${dir:?}/$snap"; return 1; }
-  pr_snapshot_link "$base.snap/diff" "$2" "$stage.diff" && pr_snapshot_link "$base.snap/names" "$2.names" "$stage.names" ||
+  if [ "$(readlink "$2")" != "$base.snap/diff" ] || [ "$(readlink "$2.names")" != "$base.snap/names" ]; then
+    pr_snapshot_bootstrap "$2" "$snap" "$stage" || { [ "$created" = 0 ] || rm -rf "${dir:?}/$snap"; return 1; }
+    boot=1
+  fi
+  ln -s "$snap" "$stage.lnk" && fleet_rename "$stage.lnk" "$2.snap" || {
+    rm -f "$stage.lnk"
+    [ "$boot" = 0 ] || pr_snapshot_restore "$2" "$stage"
+    [ "$created" = 0 ] || rm -rf "${dir:?}/$snap"
     return 1
+  }
+  rm -f "$stage".bak.*
   find "$dir" -maxdepth 1 -name "$base.snap.*" ! -name "$snap" -exec rm -rf {} + 2>/dev/null
   printf '%s\n' "$head"
+}
+
+# pr_snapshot_bootstrap makes <diff-path> and <diff-path>.names the fixed reader links before the first swap without
+# changing what they read: an older fleet's plain files are copied into <diff-path>.snap.legacy and .snap points
+# there, and with no reader files .snap points at <snap>. Every path it replaces is saved under <stage>.bak.*, and a
+# failure restores them, so the caller sees the paths as they were.
+pr_snapshot_bootstrap() {
+  local dir base target k
+  dir="$(dirname "$1")" base="$(basename "$1")" target="$2"
+  for k in diff names snap; do
+    pr_snapshot_save "$(pr_snapshot_path "$1" "$k")" "$3.bak.$k" || { rm -f "$3".bak.*; return 1; }
+  done
+  if [ -e "$1" ] || [ -e "$1.names" ]; then
+    target="$base.snap.legacy"
+    rm -rf "${dir:?}/$target"
+    { mkdir "$dir/$target" && cat "$1" >"$dir/$target/diff" &&
+      { [ ! -e "$1.names" ] || cat "$1.names"; } >"$dir/$target/names"; } 2>/dev/null ||
+      { rm -rf "${dir:?}/$target"; rm -f "$3".bak.*; return 1; }
+  fi
+  ln -s "$target" "$3.lnk" && fleet_rename "$3.lnk" "$1.snap" &&
+    pr_snapshot_link "$base.snap/diff" "$1" "$3.diff" && pr_snapshot_link "$base.snap/names" "$1.names" "$3.names" || {
+    rm -f "$3.lnk"
+    pr_snapshot_restore "$1" "$3"
+    return 1
+  }
+}
+
+# pr_snapshot_path prints the <diff-path> reader path a backup key names: diff, names or snap.
+pr_snapshot_path() {
+  [ "$2" != diff ] || { printf '%s\n' "$1"; return; }
+  printf '%s.%s\n' "$1" "$2"
+}
+
+# pr_snapshot_save records <path> under <bak>: a symlink's target in <bak>.link, a file as a copy in <bak>, and an
+# absent path as <bak>.none.
+pr_snapshot_save() {
+  [ ! -L "$1" ] || { readlink "$1" >"$2.link"; return; }
+  [ ! -e "$1" ] || { cp -p "$1" "$2"; return; }
+  : >"$2.none"
+}
+
+# pr_snapshot_restore puts the reader paths of <diff-path> back as pr_snapshot_bootstrap saved them under
+# <stage>.bak.*, and removes the legacy copy.
+pr_snapshot_restore() {
+  local k p bak
+  for k in diff names snap; do
+    p="$(pr_snapshot_path "$1" "$k")" bak="$2.bak.$k"
+    [ ! -f "$bak.link" ] || { ln -s "$(cat "$bak.link")" "$bak.r" && fleet_rename "$bak.r" "$p"; continue; }
+    [ ! -f "$bak.none" ] || { rm -f "$p"; continue; }
+    fleet_rename "$bak" "$p"
+  done
+  rm -f "$2".bak.*
+  rm -rf "$1.snap.legacy"
 }
 
 # pr_capture writes <pr>'s diff, names and head into <dir> and prints the head. When the head moves during the

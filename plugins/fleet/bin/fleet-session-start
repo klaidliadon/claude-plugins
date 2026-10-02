@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
 [ "${FLEET_MANAGER:-}" = 1 ] || exit 0
+BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$BIN/lib.sh"
 echo "Fleet status (you are the fleet manager; load the fleet-manager skill):"
-"$(dirname "$0")/fleet-status" 2>&1 || echo "fleet-status failed: report this before acting"
+"$BIN/fleet-status" 2>&1 || echo "fleet-status failed: report this before acting"
+handoff="$FLEET_HOME/handoff.md"
+[ -f "$handoff" ] || exit 0
+m="$(stat -c %Y "$handoff" 2>/dev/null || stat -f %m "$handoff")"
+echo "handoff: $handoff ($(date -u -d "@$m" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$m" +%Y-%m-%dT%H:%M:%SZ))"
+# The takeover waits for the old session to go idle, so session start only says it is pending.
+[ -z "$(fm_get "$handoff" .previous_terminal)" ] || [ -n "$(fm_get "$handoff" .taken_over_at)" ] ||
+  echo "takeover pending: run fleet-checkpoint takeover"
