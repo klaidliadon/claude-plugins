@@ -13,18 +13,26 @@ while [ $# -gt 0 ]; do
 done
 touch "$state"
 
-# poll prints what changed since the last poll and succeeds when the fleet waits on the user.
+# die exits 1 when stdout or the state cannot be written. The functions below run in conditions, where errexit is
+# off, so they call it before recording anything they failed to print, and the next watch prints it.
+die() {
+  echo "fleet-watch: cannot write $1" >&2
+  exit 1
+}
+
+# poll prints what changed since the last poll. It returns 0 when the fleet waits on the user, 1 when it does not,
+# and 2 when the status command failed.
 poll() {
   local now
   if ! now="$($cmd)"; then
-    [ -f "$state.failed" ] || { echo "fleet-watch: status failed"; touch "$state.failed"; }
-    return 1
+    [ -f "$state.failed" ] || { echo "fleet-watch: status failed" || die output; touch "$state.failed" || die state; }
+    return 2
   fi
   rm -f "$state.failed"
   awk -F'\t' 'NF == 0 { next } FILENAME == ARGV[1] { old[$1 "/" $2] = $3 "\t" $4; next }
     { k = $1 "/" $2; seen[k] = 1; if (old[k] != $3 "\t" $4) print k ": " $4 }
-    END { for (k in old) if (!(k in seen)) print k ": gone"; fflush() }' "$state" <(printf '%s\n' "$now")
-  printf '%s\n' "$now" >"$state"
+    END { for (k in old) if (!(k in seen)) print k ": gone"; fflush() }' "$state" <(printf '%s\n' "$now") || die output
+  printf '%s\n' "$now" >"$state" || die state
   waiting_on_user "$now"
 }
 
@@ -35,37 +43,43 @@ waiting_on_user() {
     { exit 1 }' <<<"$1"
 }
 
-# slack_tick prints "slack: check" every review_requests.interval_min minutes while config.yaml lists sources,
-# and fails when it lists none or cannot be read.
+# slack_tick prints "slack: check" every review_requests.interval_min minutes while config.yaml lists sources. It
+# returns 0 when it lists sources, 1 when it lists none, and 2 when it cannot be read.
 slack_tick() {
   local n interval last now
   if ! n="$(fleet_config '.review_requests.sources | length' 2>/dev/null)" ||
     ! interval="$(fleet_config '.review_requests.interval_min // 20' 2>/dev/null)" ||
     ! [[ "${interval:-20}" =~ ^[1-9][0-9]*$ ]]; then
-    [ -f "$state.config-failed" ] || { echo "fleet-watch: config.yaml invalid"; touch "$state.config-failed"; }
-    return 1
+    [ -f "$state.config-failed" ] ||
+      { echo "fleet-watch: config.yaml invalid" || die output; touch "$state.config-failed" || die state; }
+    return 2
   fi
   rm -f "$state.config-failed"
   [ "${n:-0}" -gt 0 ] || return 1
   now="$(date +%s)"
   last="$(cat "$state.slack" 2>/dev/null || echo 0)"
   [ $((now - last)) -ge $((${interval:-20} * 60)) ] || return 0
-  echo "slack: check"
-  echo "$now" >"$state.slack"
+  echo "slack: check" || die output
+  echo "$now" >"$state.slack" || die state
 }
 
-# An idle fleet prints one idle line. Without sources nothing can wake it, so the watch exits; with sources it
-# keeps ticking, and a "slack: check" is the wake.
+# An idle fleet prints one idle line. A failed status read leaves the idle state as it was. Without sources nothing
+# can wake an idle fleet, so the watch exits; with sources, or a config.yaml it cannot read yet, it keeps ticking,
+# and a "slack: check" is the wake.
 idle=0
 while true; do
-  if poll; then
-    [ "$idle" = 1 ] || echo "idle: waiting on user"
-    idle=1
-  else
-    idle=0
-  fi
-  slack_tick && sources=1 || sources=0
+  polled=0
+  poll || polled=$?
+  case "$polled" in
+    0)
+      [ "$idle" = 1 ] || echo "idle: waiting on user" || die output
+      idle=1
+      ;;
+    1) idle=0 ;;
+  esac
+  ticked=0
+  slack_tick || ticked=$?
   [ "$once" = 0 ] || exit 0
-  [ "$idle" = 0 ] || [ "$sources" = 1 ] || exit 0
+  [ "$idle" = 0 ] || [ "$ticked" != 1 ] || exit 0
   sleep "${FLEET_WATCH_INTERVAL:-60}"
 done

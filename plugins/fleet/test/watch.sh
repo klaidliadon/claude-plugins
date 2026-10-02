@@ -103,11 +103,14 @@ out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
 assert_eq "$(tail -2 <<<"$out")" $'idle: waiting on user\nslack: check'
 # loop runs the watch for 4s at a 0.1s poll from a fresh state while "$1" runs in the background.
 # until_file waits up to 4s for the watch to write a state file that matches a pattern, so the steps follow the
-# watch, not a clock.
-until_file() {
+# watch, not a clock. until_ok waits the same way for any command to succeed.
+until_ok() {
   local i
-  for i in $(seq 80); do grep -qs "$2" "$1" && return 0; sleep 0.05; done
+  for i in $(seq 80); do "$@" && return 0; sleep 0.05; done
   return 1
+}
+until_file() {
+  until_ok grep -qs "$2" "$1"
 }
 loop() {
   rm -f "$T/loop-state"*
@@ -141,13 +144,73 @@ for status in "cat $T/tsv" true; do
   assert_eq "$(tail -1 <<<"$out")" "idle: waiting on user"
   assert_eq "$(grep -c '^idle: waiting on user$' <<<"$out")" 1
 done
-# An unreadable config.yaml names no source either.
+# An unreadable config.yaml may be a transient read failure, so an idle watch keeps running, reports it once, and
+# ticks once the file reads again.
 echo 'review_requests: [unclosed' >"$FLEET_HOME/config.yaml"
 export FLEET_STATUS_CMD=true
-loop :
-assert_eq "$rc" 0
-assert_eq "$out" $'idle: waiting on user\nfleet-watch: config.yaml invalid'
+loop 'until_ok test -e "$T/loop-state.config-failed"
+  printf "review_requests:\n  sources: [{slack: C0TEAM, repos: [o/r]}]\n" >"$FLEET_HOME/config.yaml"'
+assert_eq "$rc" 124
+assert_eq "$(head -2 <<<"$out")" $'idle: waiting on user\nfleet-watch: config.yaml invalid'
+assert_eq "$(grep -c 'config.yaml invalid' <<<"$out")" 1
+assert_eq "$(grep -c '^slack: check$' <<<"$out")" 1
+# A status failure on an idle fleet with a source keeps the watch ticking, and the unchanged table after it is
+# still the same idle, so the idle line is not printed again.
+printf '#!/usr/bin/env bash\n[ ! -e %s ] || { rm %s; exit 1; }\ncat %s\n' "$T/fail-once" "$T/fail-once" "$T/tsv" >"$T/flaky"
+chmod +x "$T/flaky"
+export FLEET_STATUS_CMD="$T/flaky"
+loop 'until_file "$T/loop-state.slack" .; touch "$T/fail-once"; until_ok test -e "$T/loop-state.failed"
+  until_ok test ! -e "$T/loop-state.failed"; echo 0 >"$T/loop-state.slack"'
+assert_eq "$rc" 124
+assert_eq "$(grep -c '^idle: waiting on user$' <<<"$out")" 1
+assert_eq "$(grep -c '^fleet-watch: status failed$' <<<"$out")" 1
+assert_eq "$(grep -c '^slack: check$' <<<"$out")" 2
 rm "$FLEET_HOME/config.yaml"
-out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
+out="$(FLEET_STATUS_CMD=true "$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
 assert_eq "$out" "idle: waiting on user"
+# When stdout cannot be written, the watch exits 1 before recording what it failed to print, so the next watch
+# prints it.
+export FLEET_STATUS_CMD="cat $T/tsv"
+printf 'obj\t1-api\tin-review\twait CI\tfalse\n' >"$T/tsv"
+"$DIR/bin/fleet-watch" --once --state "$T/out-state" >/dev/null
+cp "$T/out-state" "$T/out-state.before"
+printf 'obj\t1-api\tin-review\tstart fix round 2\tfalse\n' >"$T/tsv"
+"$DIR/bin/fleet-watch" --once --state "$T/out-state" >&- 2>"$T/err"
+assert_eq "$?" 1
+assert_contains "$(cat "$T/err")" "fleet-watch: cannot write output"
+assert_ok cmp -s "$T/out-state.before" "$T/out-state"
+assert_eq "$("$DIR/bin/fleet-watch" --once --state "$T/out-state")" "obj/1-api: start fix round 2"
+printf 'review_requests:\n  sources: [{slack: C0TEAM, repos: [o/r]}]\n' >"$FLEET_HOME/config.yaml"
+"$DIR/bin/fleet-watch" --once --state "$T/out-state" >&- 2>"$T/err"
+assert_eq "$?" 1
+assert_contains "$(cat "$T/err")" "fleet-watch: cannot write output"
+assert_fail test -e "$T/out-state.slack"
+assert_eq "$("$DIR/bin/fleet-watch" --once --state "$T/out-state")" "slack: check"
+FLEET_STATUS_CMD=false "$DIR/bin/fleet-watch" --once --state "$T/out-state" >&- 2>/dev/null
+assert_eq "$?" 1
+assert_fail test -e "$T/out-state.failed"
+echo 'review_requests: [unclosed' >"$FLEET_HOME/config.yaml"
+"$DIR/bin/fleet-watch" --once --state "$T/out-state" >&- 2>/dev/null
+assert_eq "$?" 1
+assert_fail test -e "$T/out-state.config-failed"
+# A state file that cannot be written exits 1 as well; what was printed is printed again by the next watch.
+rm "$FLEET_HOME/config.yaml" "$T/out-state.slack"
+printf 'obj\t1-api\tin-review\twait CI\tfalse\n' >"$T/tsv"
+chmod 444 "$T/out-state"
+out="$("$DIR/bin/fleet-watch" --once --state "$T/out-state" 2>"$T/err")"
+assert_eq "$?" 1; assert_eq "$out" "obj/1-api: wait CI"
+assert_contains "$(cat "$T/err")" "fleet-watch: cannot write state"
+chmod 644 "$T/out-state"
+printf 'review_requests:\n  sources: [{slack: C0TEAM, repos: [o/r]}]\n' >"$FLEET_HOME/config.yaml"
+echo 0 >"$T/out-state.slack"; chmod 444 "$T/out-state.slack"
+out="$("$DIR/bin/fleet-watch" --once --state "$T/out-state" 2>"$T/err")"
+assert_eq "$?" 1; assert_contains "$out" "slack: check"
+assert_contains "$(cat "$T/err")" "fleet-watch: cannot write state"
+mkdir "$T/ro"; touch "$T/ro/state"; chmod 555 "$T/ro"
+for c in false "cat $T/tsv"; do
+  [ "$c" = false ] || echo 'review_requests: [unclosed' >"$FLEET_HOME/config.yaml"
+  FLEET_STATUS_CMD="$c" "$DIR/bin/fleet-watch" --once --state "$T/ro/state" >/dev/null 2>"$T/err"
+  assert_eq "$?" 1; assert_contains "$(cat "$T/err")" "fleet-watch: cannot write state"
+done
+chmod 755 "$T/ro"
 finish_tests watch
