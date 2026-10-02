@@ -38,7 +38,7 @@ cat >"$FLEET_HOME/config.yaml" <<'YAML'
 review_requests:
   interval_min: 20
   sources:
-    - slack: "#team"
+    - slack: C0TEAM
       repos: [o/r]
 YAML
 assert_eq "$("$DIR/bin/fleet-watch" --once --state "$T/slack-state")" "slack: check"
@@ -53,7 +53,7 @@ assert_eq "$("$DIR/bin/fleet-watch" --once --state "$T/slack-state")" $'obj/1-ap
 yq -i 'del(.review_requests.interval_min)' "$FLEET_HOME/config.yaml"
 echo $(($(date +%s) - 20 * 60)) >"$T/slack-state.slack"
 assert_eq "$("$DIR/bin/fleet-watch" --once --state "$T/slack-state")" "slack: check"
-for bad in 'review_requests: {interval_min: 0, sources: [{slack: "#t"}]}' 'review_requests: {interval_min: abc, sources: [{slack: "#t"}]}' 'review_requests: [unclosed'; do
+for bad in 'review_requests: {interval_min: 0, sources: [{slack: C0T}]}' 'review_requests: {interval_min: abc, sources: [{slack: C0T}]}' 'review_requests: [unclosed'; do
   echo "$bad" >"$FLEET_HOME/config.yaml"
   rm -f "$T/slack-state.slack"
   assert_eq "$("$DIR/bin/fleet-watch" --once --state "$T/slack-state")" "fleet-watch: config.yaml invalid"
@@ -92,11 +92,61 @@ cp "$T/tsv.gated" "$T/tsv"
 printf 'obj\t9-i\treview\task review\tfalse\n' >>"$T/tsv"
 not_idle
 cp "$T/tsv.gated" "$T/tsv"
-# A Slack source does not keep the watch alive: the manager re-arms it on the user's next message.
-printf 'review_requests:\n  sources: [{slack: "#t", repos: [o/r]}]\n' >"$FLEET_HOME/config.yaml"
-echo $(date +%s) >"$T/idle-state.slack"
+# With a source, an idle fleet still ticks: an all-gated or empty table prints the idle line, then "slack: check".
+printf 'review_requests:\n  sources: [{slack: C0TEAM, repos: [o/r]}]\n' >"$FLEET_HOME/config.yaml"
+rm -f "$T/idle-state.slack"
 out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
-assert_eq "$out" $'obj/9-i: gone\nidle: waiting on user'
+assert_eq "$out" $'obj/9-i: gone\nidle: waiting on user\nslack: check'
+export FLEET_STATUS_CMD="true"
+rm -f "$T/idle-state.slack"
+out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
+assert_eq "$(tail -2 <<<"$out")" $'idle: waiting on user\nslack: check'
+# loop runs the watch for 4s at a 0.1s poll from a fresh state while "$1" runs in the background.
+# until_file waits up to 4s for the watch to write a state file that matches a pattern, so the steps follow the
+# watch, not a clock.
+until_file() {
+  local i
+  for i in $(seq 80); do grep -qs "$2" "$1" && return 0; sleep 0.05; done
+  return 1
+}
+loop() {
+  rm -f "$T/loop-state"*
+  eval "$1" &
+  out="$(FLEET_WATCH_INTERVAL=0.1 timeout 4 "$DIR/bin/fleet-watch" --state "$T/loop-state")"
+  rc=$?
+  wait
+}
+# Idle with a source: the loop keeps running (timeout kills it, 124), prints the idle line once, and ticks
+# again when the interval passes.
+for status in "cat $T/tsv" true; do
+  export FLEET_STATUS_CMD="$status"
+  loop 'until_file "$T/loop-state.slack" .; echo 0 >"$T/loop-state.slack"'
+  assert_eq "$rc" 124
+  assert_eq "$(grep -c '^idle: waiting on user$' <<<"$out")" 1
+  assert_eq "$(grep -c '^slack: check$' <<<"$out")" 2
+done
+# Leaving idle and coming back prints the idle line again.
+export FLEET_STATUS_CMD="cat $T/tsv"
+loop 'until_file "$T/loop-state.slack" .; printf "obj\t8-h\tin-review\trun reviews round 1\tfalse\n" >>"$T/tsv"
+  until_file "$T/loop-state" 8-h; cp "$T/tsv.gated" "$T/tsv"'
+assert_eq "$rc" 124
+assert_eq "$(grep -c '^idle: waiting on user$' <<<"$out")" 2
+assert_contains "$out" $'obj/8-h: run reviews round 1\nobj/8-h: gone\nidle: waiting on user'
+# Without a source nothing can wake an idle fleet, so the loop exits 0 after one idle line.
+rm "$FLEET_HOME/config.yaml"
+for status in "cat $T/tsv" true; do
+  export FLEET_STATUS_CMD="$status"
+  loop :
+  assert_eq "$rc" 0
+  assert_eq "$(tail -1 <<<"$out")" "idle: waiting on user"
+  assert_eq "$(grep -c '^idle: waiting on user$' <<<"$out")" 1
+done
+# An unreadable config.yaml names no source either.
+echo 'review_requests: [unclosed' >"$FLEET_HOME/config.yaml"
+export FLEET_STATUS_CMD=true
+loop :
+assert_eq "$rc" 0
+assert_eq "$out" $'idle: waiting on user\nfleet-watch: config.yaml invalid'
 rm "$FLEET_HOME/config.yaml"
 out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
 assert_eq "$out" "idle: waiting on user"

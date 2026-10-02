@@ -74,6 +74,15 @@ assert_contains "$fill_step" 'DIFF_PATH=<spec dir>/round-1.diff HEAD=<session.re
 assert_contains "$(grep '^| `restart round <N> (fresh agent)`' "$SKILL")" "filled contract"
 assert_contains "$(cat "$SKILL")" '(Orca answers "capability is revoked") is acked and not recorded'
 assert_contains "$(cat "$SKILL")" "re-arm it on the user's next message, never on a timer"
+assert_contains "$(cat "$SKILL")" "The watch exits on idle only when no source is configured"
+assert_contains "$(cat "$SKILL")" 'With sources it keeps running, and a `slack: check` is the wake.'
+requests="$(sed -n '/^## Review requests/,/^## /p' "$SKILL")"
+for term in slack_read_channel oldest= next_cursor latest_reply thread_lookback_days slack_read_thread; do
+  assert_contains "$requests" "$term"
+done
+read_step="$(sed -n '/^2\./,/^3\./p' <<<"$requests" | sed '$d')"
+assert_contains "$read_step" "slack_read_channel"
+hits="$(grep -niE 'search|slack_search' <<<"$read_step")" && fail "step 2 of Review requests searches: $hits"
 assert_contains "$(cat "$SKILL")" '`{globs: [...], grep: [...]}`'
 
 hits="$(grep -rniE 'om''sx|api''-gateway|RI''DL' "$DIR" --exclude-dir=.git)" && fail "repo-specific rules in the plugin: $hits"

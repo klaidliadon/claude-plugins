@@ -4,6 +4,9 @@ source "$(dirname "$0")/lib.sh"
 
 usage="usage: fleet-review-request run | cursor <source> [<ts>] | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
 cursor="$FLEET_HOME/review-requests.cursor"
+need_channel_id() {
+  [[ "$1" =~ ^[CGD][A-Z0-9]+$ ]] || { echo "fleet-review-request: source must be a Slack channel ID: $1" >&2; exit 2; }
+}
 
 case "${1:-}" in
   run)
@@ -35,6 +38,7 @@ case "${1:-}" in
     ;;
   cursor)
     src="${2:?$usage}"
+    need_channel_id "$src"
     if [ $# -eq 2 ]; then
       src="$src" yaml_get "$cursor" '.[strenv(src)]'
       exit 0
@@ -46,6 +50,7 @@ case "${1:-}" in
   add)
     [ $# -eq 8 ] || { echo "$usage" >&2; exit 2; }
     src="$2" url="$3"
+    need_channel_id "$src"
     [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]] || { echo "fleet-review-request: not a PR URL: $url" >&2; exit 2; }
     slug="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" repo="${BASH_REMATCH[2]}" n="${BASH_REMATCH[3]}"
     # GitHub owner and repo names cannot contain "+", so the key is unambiguous.

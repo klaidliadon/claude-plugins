@@ -13,18 +13,19 @@ while [ $# -gt 0 ]; do
 done
 touch "$state"
 
+# poll prints what changed since the last poll and succeeds when the fleet waits on the user.
 poll() {
   local now
   if ! now="$($cmd)"; then
     [ -f "$state.failed" ] || { echo "fleet-watch: status failed"; touch "$state.failed"; }
-    return 0
+    return 1
   fi
   rm -f "$state.failed"
   awk -F'\t' 'NF == 0 { next } FILENAME == ARGV[1] { old[$1 "/" $2] = $3 "\t" $4; next }
     { k = $1 "/" $2; seen[k] = 1; if (old[k] != $3 "\t" $4) print k ": " $4 }
     END { for (k in old) if (!(k in seen)) print k ": gone"; fflush() }' "$state" <(printf '%s\n' "$now")
   printf '%s\n' "$now" >"$state"
-  ! waiting_on_user "$now" || { echo "idle: waiting on user"; exit 0; }
+  waiting_on_user "$now"
 }
 
 # waiting_on_user succeeds when no worker or session runs and every row's NEXT needs the user.
@@ -34,17 +35,18 @@ waiting_on_user() {
     { exit 1 }' <<<"$1"
 }
 
-# slack_tick prints "slack: check" every review_requests.interval_min minutes while config.yaml lists sources.
+# slack_tick prints "slack: check" every review_requests.interval_min minutes while config.yaml lists sources,
+# and fails when it lists none or cannot be read.
 slack_tick() {
   local n interval last now
   if ! n="$(fleet_config '.review_requests.sources | length' 2>/dev/null)" ||
     ! interval="$(fleet_config '.review_requests.interval_min // 20' 2>/dev/null)" ||
     ! [[ "${interval:-20}" =~ ^[1-9][0-9]*$ ]]; then
     [ -f "$state.config-failed" ] || { echo "fleet-watch: config.yaml invalid"; touch "$state.config-failed"; }
-    return 0
+    return 1
   fi
   rm -f "$state.config-failed"
-  [ "${n:-0}" -gt 0 ] || return 0
+  [ "${n:-0}" -gt 0 ] || return 1
   now="$(date +%s)"
   last="$(cat "$state.slack" 2>/dev/null || echo 0)"
   [ $((now - last)) -ge $((${interval:-20} * 60)) ] || return 0
@@ -52,9 +54,18 @@ slack_tick() {
   echo "$now" >"$state.slack"
 }
 
-if [ "$once" = 1 ]; then poll; slack_tick; exit 0; fi
+# An idle fleet prints one idle line. Without sources nothing can wake it, so the watch exits; with sources it
+# keeps ticking, and a "slack: check" is the wake.
+idle=0
 while true; do
-  poll
-  slack_tick
+  if poll; then
+    [ "$idle" = 1 ] || echo "idle: waiting on user"
+    idle=1
+  else
+    idle=0
+  fi
+  slack_tick && sources=1 || sources=0
+  [ "$once" = 0 ] || exit 0
+  [ "$idle" = 0 ] || [ "$sources" = 1 ] || exit 0
   sleep "${FLEET_WATCH_INTERVAL:-60}"
 done
