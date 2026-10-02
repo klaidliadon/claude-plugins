@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BIN="$(cd "$(dirname "$0")" && pwd)"
+source "$BIN/lib.sh"
+
+usage="usage: fleet-checkpoint write | takeover"
+handoff="$FLEET_HOME/handoff.md" lock="$FLEET_HOME/.checkpoint.lock"
+tmp=""
+
+# handoff_set applies the yq <expr> to the handoff frontmatter through a temp file and one rename.
+handoff_set() {
+  local t
+  t="$(mktemp "$FLEET_HOME/.handoff.XXXXXX")" && [ -n "$t" ] || return 1
+  yq --front-matter=process "$1" "$handoff" >"$t" && mv "$t" "$handoff" || { rm -f "$t"; return 1; }
+}
+
+# render prints the handoff for the fleet-status --json rows in $1 and the run-current result in $2. It runs in a
+# condition, where errexit is off, so every step returns on failure.
+render() {
+  local cursor="$FLEET_HOME/review-requests.cursor" fm
+  fm="$(G="$(date -u +%Y-%m-%dT%H:%M:%SZ)" H="$FLEET_HOME" R="$(jq -r '.run.id // ""' <<<"$2")" P="${ORCA_TERMINAL_HANDLE:-}" \
+    yq -n '.generated = strenv(G) | .fleet_home = strenv(H) | .run_id = strenv(R)
+      | .previous_terminal = strenv(P) | .next_terminal = ""')" || return 1
+  printf -- '---\n%s\n---\n' "$fm" || return 1
+  jq -rn --argjson rows "$1" --argjson cur "$2" --arg gated "$FLEET_GATED_NEXT" '
+    def cell: tostring | gsub("\\|"; "\\|") | gsub("\n"; "<br>");
+    def task_row: "| \(.objective | cell) | \(.task | cell) | \(.pr_url // .pr | cell)";
+    ($rows | sort_by([.objective, .task])) as $rows
+    | "# Fleet handoff", "",
+      "## In flight", "",
+      "| Objective | Task | PR | State | NEXT | Live |", "|---|---|---|---|---|---|",
+      ($rows[] | "\(task_row) | \(.state | cell) | \(.next | cell) | \(.live) |"), "",
+      "## Waiting on you", "",
+      ([$rows[] | select((.next | test($gated)) or .next == "ask review")] as $w
+       | if ($w | length) == 0 then "none"
+         else "| Objective | Task | PR | NEXT |", "|---|---|---|---|", ($w[] | "\(task_row) | \(.next | cell) |") end), "",
+      "## Terminal binding", "",
+      (if $cur.run == null then "run: none" else "run: \($cur.run.id | cell) (\($cur.run.objective // "" | cell))" end), "",
+      "## Fenced Runs", "",
+      ([$rows[] | select(.next | startswith("rebind: "))] | group_by(.next)
+       | if length == 0 then "none"
+         else .[] | "- `\(.[0].next | ltrimstr("rebind: "))` fixes \([.[] | "\(.objective)/\(.task)" | cell] | join(", "))" end), "",
+      "## Review cursor", ""' || return 1
+  [ -f "$cursor" ] || { echo "cursor: none"; return; }
+  printf '```yaml\n' && cat "$cursor" && printf '```\n'
+}
+
+# archive moves the current handoff to the lowest free _archive/handoff-<date>-<slot>.md, reserving the slot with a
+# no-clobber create so an existing archive is never replaced, and prints the archive path.
+archive() {
+  local day n=1 dst
+  day="$(date -u +%Y-%m-%d)"
+  mkdir -p "$FLEET_HOME/_archive" || return 1
+  until (set -C; : >"$FLEET_HOME/_archive/handoff-$day-$n.md") 2>/dev/null; do
+    [ -e "$FLEET_HOME/_archive/handoff-$day-$n.md" ] || return 1
+    n=$((n + 1))
+  done
+  dst="$FLEET_HOME/_archive/handoff-$day-$n.md"
+  mv "$handoff" "$dst" || { rm -f "$dst"; return 1; }
+  printf '%s\n' "$dst"
+}
+
+failed() {
+  printf 'fleet-checkpoint: %s\nfleet-checkpoint: FAILED, do not close this tab\n' "$1" >&2
+  exit 1
+}
+
+stuck() {
+  echo "fleet-checkpoint: takeover FAILED, old tab left open: $1" >&2
+  exit 1
+}
+
+write() {
+  local rows cur out arch="" rc handle launch
+  [ -z "${ORCA_TERMINAL_HANDLE:-}" ] || [ -n "${ORCA_WORKTREE_ID:-}" ] || failed "ORCA_WORKTREE_ID is unset"
+  rows="$("$BIN/fleet-status" --json)" || failed "fleet-status failed"
+  out="$(orca orchestration run-current --json)" || failed "orca run-current failed"
+  cur="$(jq -ce 'select(.ok == true and (.result | type) == "object" and (.result | has("run"))) | .result' <<<"$out" 2>/dev/null)" ||
+    failed "orca run-current returned no binding result"
+  tmp="$(mktemp "$FLEET_HOME/.handoff.XXXXXX")" && [ -n "$tmp" ] || failed "mktemp failed"
+  render "$rows" "$cur" >"$tmp" || failed "cannot write $tmp"
+  if [ -f "$handoff" ]; then
+    arch="$(archive)" || failed "cannot archive $handoff"
+  fi
+  if ! mv "$tmp" "$handoff"; then
+    [ -z "$arch" ] || mv "$arch" "$handoff"
+    failed "cannot move the handoff into place"
+  fi
+  tmp=""
+  if [ -z "${ORCA_TERMINAL_HANDLE:-}" ]; then
+    echo "Checkpoint written: $handoff. Not in an Orca terminal: start a new manager, then close this tab."
+    return
+  fi
+  rc=0
+  launch="$(orca terminal create --worktree "id:$ORCA_WORKTREE_ID" --title "fleet manager" \
+    --command 'FLEET_MANAGER=1 claude "/fleet:fleet-manager"' --focus --json)" || rc=$?
+  handle="$(jq -r 'if type == "object" then .result.terminal.handle // "" else "" end' <<<"$launch" 2>/dev/null)" || handle=""
+  if [ "$rc" != 0 ] && [ -z "$handle" ] && jq -e 'type == "object" and .ok == false' >/dev/null 2>&1 <<<"$launch"; then
+    # No tab exists, so this session stays manager: a later manager elsewhere must not take over from it.
+    handoff_set '.previous_terminal = ""' ||
+      echo "fleet-checkpoint: cannot clear previous_terminal in $handoff" >&2
+    failed "orca terminal create: $(jq -r '.error.code // "unknown"' <<<"$launch")"
+  fi
+  if [ "$rc" != 0 ] || [ -z "$handle" ]; then
+    echo "fleet-checkpoint: launch outcome unknown, check Orca for a new fleet manager tab before doing anything" >&2
+    exit 3
+  fi
+  h="$handle" handoff_set '.next_terminal = strenv(h)' ||
+    echo "fleet-checkpoint: cannot record next_terminal $handle in $handoff" >&2
+  echo "Checkpoint written: $handoff. New manager starting in $handle; it closes this tab once it holds the Run."
+}
+
+takeover() {
+  local wait_sec prev run_id me out cur closed
+  wait_sec="${FLEET_IDLE_WAIT_SEC:-120}"
+  [[ "$wait_sec" =~ ^[0-9]+$ ]] && [ "$((10#$wait_sec))" -gt 0 ] || {
+    echo "fleet-checkpoint: FLEET_IDLE_WAIT_SEC must be a positive integer" >&2
+    exit 2
+  }
+  me="${ORCA_TERMINAL_HANDLE:-}" prev=""
+  [ ! -f "$handoff" ] || prev="$(fm_get "$handoff" '.previous_terminal')"
+  if [ -z "$prev" ] || [ "$prev" = "$me" ] || [ -n "$(fm_get "$handoff" '.taken_over_at')" ]; then
+    echo "takeover: nothing to do"
+    return
+  fi
+  [ -n "$me" ] || stuck "not in an Orca terminal"
+  run_id="$(fm_get "$handoff" '.run_id')"
+  if [ -n "$run_id" ]; then
+    # run-use --from acts as the named terminal, so the new terminal binds itself with a plain run-use.
+    out="$(orca orchestration run-use --id "$run_id" --json)" && jq -e '.ok == true' >/dev/null 2>&1 <<<"$out" ||
+      stuck "run-use --id $run_id failed: $(jq -r '.error.code // "no reply"' <<<"$out" 2>/dev/null || echo "no reply")"
+    out="$(orca orchestration run-current --json)" && cur="$(jq -re 'select(.ok == true) | .result.run.id // ""' <<<"$out" 2>/dev/null)" ||
+      stuck "run-current failed"
+    [ "$cur" = "$run_id" ] || stuck "run-current names ${cur:-no Run}, not $run_id"
+  fi
+  m="$me" handoff_set '.next_terminal = strenv(m)' ||
+    { echo "fleet-checkpoint: Run taken over, cannot write $handoff, close $prev by hand once it is idle" >&2; exit 1; }
+  out="$(orca terminal wait --terminal "$prev" --for tui-idle --timeout-ms "$((10#$wait_sec * 1000))" --json)" &&
+    jq -e '.ok == true and .result.wait.satisfied == true' >/dev/null 2>&1 <<<"$out" ||
+    { echo "fleet-checkpoint: Run taken over, old session not idle, close $prev by hand once it is" >&2; exit 1; }
+  out="$(orca terminal close --terminal "$prev" --tab --json)" || true
+  closed="$(jq -r 'if .ok == true then "ok" else .error.code // "" end' <<<"$out" 2>/dev/null)" || closed=""
+  at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" handoff_set '.taken_over_at = strenv(at)' ||
+    echo "fleet-checkpoint: cannot record taken_over_at in $handoff" >&2
+  # A stale handle means the old terminal is already gone, which is the state the close asks for.
+  [ "$closed" = ok ] || [ "$closed" = terminal_handle_stale ] ||
+    { echo "fleet-checkpoint: Run taken over, close $prev by hand" >&2; exit 1; }
+  echo "takeover: ${run_id:-no Run} held here, closed $prev"
+}
+
+case "${1:-}" in
+  write | takeover) ;;
+  *) echo "$usage" >&2; exit 2 ;;
+esac
+mkdir -p "$FLEET_HOME"
+lock_take "$lock" || { echo "fleet-checkpoint: another checkpoint holds the lock" >&2; exit 1; }
+trap 'lock_release "$lock"; [ ! -f "$tmp" ] || rm -f "$tmp"' EXIT
+"$1"

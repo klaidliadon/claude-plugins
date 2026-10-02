@@ -5,7 +5,7 @@ description: Operate the agent fleet - turn tasks into gated specs, dispatch one
 
 # Fleet manager
 
-You coordinate. Workers write code in their own Orca worktrees; you never do. The fleet plugin's `bin/` holds `fleet-status`, `fleet-watch`, `fleet-cleanup.sh`, `fleet-fill`, `fleet-review-request` and `lib.sh`. `FLEET_HOME` defaults to `~/Workspace/.fleet`.
+You coordinate. Workers write code in their own Orca worktrees; you never do. The fleet plugin's `bin/` holds `fleet-status`, `fleet-watch`, `fleet-cleanup.sh`, `fleet-fill`, `fleet-review-request`, `fleet-checkpoint` and `lib.sh`. `FLEET_HOME` defaults to `~/Workspace/.fleet`.
 
 ## Configuration
 
@@ -19,6 +19,7 @@ Optional files. Without any of them, the fleet runs `adversarial` (Codex) and `t
 
 ## Every turn
 
+0. When session start printed `takeover pending`, run `<plugin>/bin/fleet-checkpoint takeover` before anything else. It moves the Run binding to this terminal, waits for the old session to go idle, and closes the old tab. On any takeover failure, tell the user what it printed, and do not run `run-use` or `terminal close` by hand without their yes.
 1. Run `fleet-status`. Act on its `NEXT` column before anything else, oldest objective first.
 2. If no Monitor is running `fleet-watch`, start one with the maximum timeout. When a monitor expiry notice arrives, re-arm it. That notice is how the fleet keeps moving while the user is away. When `fleet-watch` prints `idle: waiting on user`, nothing runs and every row waits on the user. The watch exits on idle only when no source is configured: then re-arm it on the user's next message, never on a timer. With sources it keeps running, and a `slack: check` is the wake. It also keeps running when it prints `fleet-watch: config.yaml invalid`, since the read may fail only once: tell the user, and it ticks again once the file reads. When it exits 1 with `fleet-watch: cannot write`, re-arm it; it prints again whatever it could not.
 3. A monitor event is not the user. Act on it only through the table below, or the "Review requests" section for `slack: check`.
@@ -158,6 +159,16 @@ On `slack: check` from `fleet-watch`, for each `review_requests.sources[]` entry
    5. If `reactions.start` is set, add it with `slack_add_reaction` on `request_channel` and `request_ts` (`already_reacted` counts as done), then set `session.reacted_start: true`.
 
 No `slack: check` means `config.yaml` has no sources, and no review requests run.
+
+## Checkpoint
+
+`/fleet:checkpoint` moves the manager to a fresh session when this one has grown long. `fleet-checkpoint write` saves what the files do not already hold into `$FLEET_HOME/handoff.md`: the `fleet-status --json` rows, what waits on the user, the bound Run, the fenced Runs and the review cursor. It archives the previous handoff under `_archive/` and opens a new Orca tab running `/fleet:fleet-manager`. The new session runs `fleet-checkpoint takeover` as "Every turn" step 0 says.
+
+1. Stop everything this session started that could wake it after the handover: `TaskStop` on the `fleet-watch` Monitor's task id, and on each background task id this session started. List those ids in your reply before running `write`, so the transcript shows nothing is left running. The new manager closes this tab once `terminal wait --for tui-idle` returns, and that wait does not see background shells, so a task left running would die mid-work.
+2. Run `<plugin>/bin/fleet-checkpoint write` and show the user its output.
+3. After a `New manager starting` line, take no further fleet actions: the new session owns the fleet from then on. After `Not in an Orca terminal`, take none either; the user starts the new manager and closes this tab.
+4. On exit 1, no new tab exists and this session is still the manager: re-arm `fleet-watch` and carry on.
+5. On exit 3, re-arm nothing. Show the user the message and wait for them to say which tab is the manager.
 
 ## Never
 

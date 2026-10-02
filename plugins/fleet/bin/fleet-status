@@ -164,9 +164,13 @@ for spec in "$FLEET_HOME"/*/*/spec.md; do
       reviews: $reviews, pr: $pr,
       asks: ([($fm.orca // [])[].dispatch_id, ($fm.session.dispatch_id // empty)] as $ids | [$asks[] | select(. as $a | $ids | index($a))] | length),
       fenced: $fenced, run: $run, now: $now, stall_after: $stall_after
-    }' | jq -c -f "$BIN/derive.jq")")
+    }' | jq -c -f "$BIN/derive.jq" | jq -c --arg url "$(fm_get "$spec" '.pr')" '. + {pr_url: ($url | select(. != "") // null)}')")
 done
 
+if [ "${1:-}" = "--json" ]; then
+  printf '%s\n' ${rows[@]+"${rows[@]}"} | jq -s .
+  exit 0
+fi
 if [ "${1:-}" = "--tsv" ]; then
   for r in ${rows[@]+"${rows[@]}"}; do jq -r '[.objective, .task, .state, .next, .live] | @tsv' <<<"$r"; done
   exit 0

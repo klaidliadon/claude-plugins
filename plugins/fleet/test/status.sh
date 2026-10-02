@@ -33,6 +33,8 @@ printf '## findings without a header\n' >"$TD/review-1-tests.md"
 
 out="$("$DIR/bin/fleet-status" --tsv)"
 assert_contains "$out" $'obj\t1-api\tin-review\trun reviews round 1'
+out="$("$DIR/bin/fleet-status" --json)"
+assert_eq "$(jq -c . <<<"$out")" '[{"objective":"obj","task":"1-api","repo":"app","pr":"#7","state":"in-review","live":false,"ci":"✅","review":"running","inbox":"-","next":"run reviews round 1","pr_url":"https://github.com/o/r/pull/7"}]'
 
 printf '<!-- counts: critical=0 important=2 suggestion=1 -->\n' >"$TD/review-1-tests.md"
 out="$("$DIR/bin/fleet-status" --tsv)"
@@ -237,4 +239,21 @@ jq '.result.tasks[0].status = "failed"' "$FX/orca/task-list-running.json" >"$T/t
 assert_eq "$(STUB_ORCA_TASKS="$T/task-list-failed.json" review_next)" $'reviews\to+app+7\treview\treview session failed: inspect'
 yq --front-matter=process -i '.cleaned_at = "2026-10-02T00:00:00Z"' "$RS"
 assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "o+app+7"
+
+# Session start names the handoff and says when a takeover is pending; it never runs the takeover.
+H="$FLEET_HOME/handoff.md"
+printf -- '---\nprevious_terminal: term_000000000001\n---\nbody\n' >"$H"
+TZ=UTC touch -t 202610021200.00 "$H"
+: >"$STUB_LOG"
+out="$(FLEET_MANAGER=1 "$DIR/bin/fleet-session-start")"
+assert_eq "$(tail -2 <<<"$out")" "handoff: $H (2026-10-02T12:00:00Z)
+takeover pending: run fleet-checkpoint takeover"
+assert_not_contains "$(cat "$STUB_LOG")" "orca terminal"
+assert_not_contains "$(cat "$STUB_LOG")" "run-use"
+yq --front-matter=process -i '.taken_over_at = "2026-10-02T12:05:00Z"' "$H"
+TZ=UTC touch -t 202610021205.00 "$H"
+assert_eq "$(FLEET_MANAGER=1 "$DIR/bin/fleet-session-start" | tail -1)" "handoff: $H (2026-10-02T12:05:00Z)"
+rm "$H"
+assert_not_contains "$(FLEET_MANAGER=1 "$DIR/bin/fleet-session-start")" "handoff:"
+assert_eq "$("$DIR/bin/fleet-session-start")" ""
 finish_tests status

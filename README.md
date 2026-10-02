@@ -7,7 +7,7 @@ Personal Claude Code plugin marketplace.
 - **agent-comms**: two agent sessions (e.g. Claude as author, Codex as reviewer) iterate on an artifact through a shared file until they converge or hit an impasse.
 - **codex-review**: run a Codex code review against a GitHub PR, specific files, or the local working tree.
 - **design-proposal**: structure a decision-ready engineering design proposal.
-- **fleet**: one manager session runs spec-gated Orca workers, one per PR, with independent review and confirmed cleanup.
+- **fleet**: one manager session runs spec-gated Orca workers, one per PR, with independent review and confirmed cleanup. Slash command: `/fleet:checkpoint` moves the manager to a fresh session.
 - **gh-stack**: GitHub-native stacked pull requests via the `gh-stack` CLI extension: create, sync, navigate, and atomically merge PR stacks.
 - **gh-workflow**: authoring GitHub PRs and issues, the gated review pipeline, chained-PR merge order, and code-review output.
 - **git-cleanup**: audit local branches and worktrees against GitHub PR state, auto-clean safe ones, prompt on the rest, with `--all` sweep across `~/Workspace` and `--dry-run`. Slash command: `/git-cleanup`.

@@ -113,6 +113,23 @@ assert_contains "$requests" "Any failed call leaves the cursor unchanged."
 hits="$(grep -niE 'search|slack_search' <<<"$read_step")" && fail "step 2 of Review requests searches: $hits"
 assert_contains "$(cat "$SKILL")" '`{globs: [...], grep: [...]}`'
 
+assert_contains "$(cat "$DIR/commands/checkpoint.md")" 'Invoke the `fleet-manager` skill and follow its "Checkpoint" section.'
+assert_ok grep -q '^description: ' "$DIR/commands/checkpoint.md"
+checkpoint="$(sed -n '/^## Checkpoint/,/^## /p' "$SKILL")"
+assert_contains "$checkpoint" '`TaskStop` on the `fleet-watch` Monitor'"'"'s task id, and on each background task id this session started'
+assert_contains "$checkpoint" 'List those ids in your reply before running `write`'
+stop_line="$(grep -n 'TaskStop' <<<"$checkpoint" | head -1 | cut -d: -f1)"
+write_line="$(grep -n 'Run `<plugin>/bin/fleet-checkpoint write`' <<<"$checkpoint" | cut -d: -f1)"
+[ -n "$stop_line" ] && [ -n "$write_line" ] && [ "$stop_line" -lt "$write_line" ] || fail "Checkpoint does not stop fleet-watch before fleet-checkpoint write"
+assert_contains "$checkpoint" 'After a `New manager starting` line, take no further fleet actions'
+assert_contains "$checkpoint" 'On exit 1, no new tab exists and this session is still the manager: re-arm `fleet-watch` and carry on.'
+assert_contains "$checkpoint" 'On exit 3, re-arm nothing.'
+step0="$(sed -n '/^## Every turn/,/^## /p' "$SKILL" | grep '^0\. ')"
+assert_contains "$step0" 'When session start printed `takeover pending`, run `<plugin>/bin/fleet-checkpoint takeover` before anything else.'
+assert_contains "$step0" 'do not run `run-use` or `terminal close` by hand without their yes'
+assert_contains "$MAINT" '`handoff.md`'
+assert_contains "$MAINT" '`_archive/`'
+
 hits="$(grep -rniE 'om''sx|api''-gateway|RI''DL' "$DIR" --exclude-dir=.git)" && fail "repo-specific rules in the plugin: $hits"
 
 finish_tests skill
