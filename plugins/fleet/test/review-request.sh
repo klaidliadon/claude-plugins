@@ -12,34 +12,57 @@ pr_json() {
   printf '{"state":"%s","author":{"login":"%s"},"reviews":%s}' "$1" "$2" "${3:-[]}" >"$STUB_GH_PR"
 }
 add() {
-  OUT="$("$RR" add "#team" "$1" alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+  OUT="$("$RR" add C0TEAM "$1" alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
   RC=$?
 }
 
-assert_eq "$("$RR" cursor "#team")" ""
-assert_ok "$RR" cursor "#team" 1759312800.000100
-assert_ok "$RR" cursor "#other" 1759312000.000001
-assert_eq "$("$RR" cursor "#team")" "1759312800.000100"
-assert_ok "$RR" cursor "#team" 1759316400.000200
-assert_eq "$("$RR" cursor "#team")" "1759316400.000200"
-assert_eq "$("$RR" cursor "#other")" "1759312000.000001"
+# A source is a Slack channel ID. C is one character short of the shortest ID, C0; a channel name and a
+# lowercase ID fail too, and no rejection writes the cursor file.
+for bad in C '#some-channel' c0team; do
+  for args in "cursor $bad" "cursor $bad 1759312800.000100"; do
+    OUT="$("$RR" $args 2>&1)"
+    assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: source must be a Slack channel ID: $bad"
+  done
+  OUT="$("$RR" add "$bad" "$PR" alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+  assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: source must be a Slack channel ID: $bad"
+  assert_fail test -e "$FLEET_HOME/review-requests.cursor"
+done
+# A cursor stored under the old channel name is not read for the channel ID, and reading leaves it as it was.
+mkdir -p "$FLEET_HOME"
+printf '"#team": "1759312000.000001"\n' >"$FLEET_HOME/review-requests.cursor"
+cp "$FLEET_HOME/review-requests.cursor" "$T/cursor.old"
+assert_eq "$("$RR" cursor C0TEAM)" ""
+assert_ok cmp -s "$T/cursor.old" "$FLEET_HOME/review-requests.cursor"
+assert_ok "$RR" cursor C0TEAM 1759312800.000100
+assert_ok "$RR" cursor C0OTHER 1759312000.000001
+assert_eq "$("$RR" cursor C0TEAM)" "1759312800.000100"
+assert_ok "$RR" cursor C0TEAM 1759316400.000200
+assert_eq "$("$RR" cursor C0TEAM)" "1759316400.000200"
+assert_eq "$("$RR" cursor C0OTHER)" "1759312000.000001"
+assert_ok grep -qFx "$(cat "$T/cursor.old")" "$FLEET_HOME/review-requests.cursor"
+for ok in C0 G0 D0; do
+  assert_ok "$RR" cursor "$ok" 1759312800.000300
+  assert_eq "$("$RR" cursor "$ok")" "1759312800.000300"
+done
 
 pr_json OPEN bob
 add "$PR"
-assert_eq "$RC" 0; assert_eq "$OUT" "skip $PR: o/app is not configured for #team"
+assert_eq "$RC" 0; assert_eq "$OUT" "skip $PR: o/app is not configured for C0TEAM"
+OUT="$("$RR" add C0 "$PR" alice https://slack.example/p1 2026-10-01T09:00:00Z C0 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "skip $PR: o/app is not configured for C0"
 assert_fail test -e "$FLEET_HOME/reviews"
 
 cat >"$FLEET_HOME/config.yaml" <<'YAML'
 review_requests:
   sources:
-    - slack: "#team"
+    - slack: C0TEAM
       repos: [o/app, o/web]
-    - slack: "#other"
+    - slack: C0OTHER
       repos: [o/api]
   skip: {authors: [me, dependabot], already_reviewer: true}
 YAML
 add https://github.com/o/api/pull/1
-assert_eq "$OUT" "skip https://github.com/o/api/pull/1: o/api is not configured for #team"
+assert_eq "$OUT" "skip https://github.com/o/api/pull/1: o/api is not configured for C0TEAM"
 add https://github.com/o/app/issues/12
 assert_eq "$RC" 2; assert_contains "$OUT" "not a PR URL"
 pr_json MERGED bob; add "$PR"
@@ -196,10 +219,10 @@ assert_ok lock_take "$L"
 assert_fail test -e "$L.break"
 
 echo '[1]' >"$FLEET_HOME/review-requests.cursor"
-assert_fail "$RR" cursor "#team" 1759316400.000300 2>/dev/null
+assert_fail "$RR" cursor C0TEAM 1759316400.000300 2>/dev/null
 assert_eq "$(cat "$FLEET_HOME/review-requests.cursor")" "[1]"
 
-OUT="$("$RR" add "#team" "$PR" alice 2>&1)"
+OUT="$("$RR" add C0TEAM "$PR" alice 2>&1)"
 assert_eq "$?" 2; assert_contains "$OUT" "usage:"
 OUT="$("$RR" nope 2>&1)"
 assert_eq "$?" 2; assert_contains "$OUT" "usage:"
