@@ -12,6 +12,9 @@ fm_set() {
   yq --front-matter=process -i "$2" "$1"
 }
 
+# FLEET_GATED_NEXT matches every NEXT that waits on the user. It is an ERE that awk and jq read alike.
+FLEET_GATED_NEXT='^(await your go|needs human approval|closed unmerged: your call|propose cleanup|blocked on .* merge|escalate: .*|rebind: .*|.*inspect)$'
+
 ledger_append() {
   mkdir -p "$FLEET_HOME"
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" >>"$FLEET_HOME/ledger.md"

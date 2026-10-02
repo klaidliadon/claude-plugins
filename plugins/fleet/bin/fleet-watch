@@ -38,9 +38,7 @@ poll() {
 
 # waiting_on_user succeeds when no worker or session runs and every row's NEXT needs the user.
 waiting_on_user() {
-  awk -F'\t' 'NF == 0 { next } $5 == "true" { exit 1 }
-    $4 ~ /^(await your go|needs human approval|closed unmerged: your call|propose cleanup|blocked on .* merge|escalate: .*|rebind: .*|.*inspect)$/ { next }
-    { exit 1 }' <<<"$1"
+  awk -F'\t' -v gated="$FLEET_GATED_NEXT" 'NF == 0 { next } $5 == "true" { exit 1 } $4 ~ gated { next } { exit 1 }' <<<"$1"
 }
 
 # slack_tick prints "slack: check" every review_requests.interval_min minutes while config.yaml lists sources. It
