@@ -66,7 +66,32 @@ assert_contains "$(grep '^| `new commits since review' "$SKILL")" "git range-dif
 assert_contains "$(grep '^| `rerun failed job' "$SKILL")" "gh run rerun <run> --failed"
 rerun_row="$(grep '^| `rerun failed job' "$SKILL")"
 assert_contains "$rerun_row" 'write `ci_rerun_pending: {head: <headRefOid>, run: <run>, attempt:'
-assert_contains "$rerun_row" 'then run `gh run rerun <run> --failed`. Last, set `ci_rerun` to the head and delete `ci_rerun_pending`'
+for term in 'started_at: <now, UTC ISO 8601>}`, then run `gh run rerun <run> --failed`' \
+  'never run `gh run rerun` again' 'wait and recheck that run on a later turn' \
+  'until `FLEET_RERUN_WAIT_MIN` minutes (default 15) past `started_at`, then stop' \
+  '`gh run view` fails' 'its JSON has no `attempt`' 'the entry has no `started_at` (fleet 0.2.2 wrote it; treat it as timed out)' \
+  'keep `ci_rerun_pending`, run nothing else, and tell the user `ci rerun uncertain for <pr>: <reason>`' \
+  'Last, once the attempt has advanced, set `ci_rerun` to the head and delete `ci_rerun_pending`'; do
+  assert_contains "$rerun_row" "$term"
+done
+state_rule="$(sed -n '/^## State rule/,/^## /p' "$SKILL")"
+for term in '`<diff-path>.snap.<head>`' 'pointing the `<diff-path>.snap` symlink at it with one rename' \
+  '`<diff-path>` and `<diff-path>.names` are fixed symlinks into `<diff-path>.snap/`' \
+  'a reader never sees a diff from one capture and names from another'; do
+  assert_contains "$state_rule" "$term"
+done
+assert_contains "$reviews_row" 'run `pr_snapshot` again and record the head it prints'
+step5="$(grep '^5\. Run `<plugin>/bin/fleet-review-request run`' "$SKILL")"
+assert_contains "$step5" '`run-list returned 500 Runs; it may be truncated, not creating a Run`'
+assert_contains "$(cat "$SKILL")" 'It also keeps running when it prints `fleet-watch: config.yaml invalid`'
+MAINT="$(cat "$DIR/MAINTENANCE.md")"
+for term in 'its `--cursor` is a line cursor that returns only new output, not a next page' \
+  'when the list holds 500 Runs and none matches `reviews <FLEET_HOME>`, `run` exits 1' \
+  '`<diff-path>.snap.<head>` with `diff`, `names` and `head`, behind the `<diff-path>.snap` symlink' \
+  'GNU `mv -T`, else BSD `mv -h`' '`FLEET_RERUN_WAIT_MIN` minutes, default 15' \
+  'reaches the `.run.lock` timeout without waiting: a `date` stub'; do
+  assert_contains "$MAINT" "$term"
+done
 fill_step="$(grep -F '3. Snapshot the PR before anything reads it' "$SKILL")"
 assert_contains "$fill_step" 'pr_snapshot <pr> <spec dir>/round-1.diff'
 assert_contains "$fill_step" 'fleet_reviewers <repo-path> <pr> <spec dir>/round-1.diff'
@@ -82,6 +107,9 @@ for term in slack_read_channel oldest= next_cursor latest_reply thread_lookback_
 done
 read_step="$(sed -n '/^2\./,/^3\./p' <<<"$requests" | sed '$d')"
 assert_contains "$read_step" "slack_read_channel"
+assert_contains "$read_step" "latest_reply"
+assert_contains "$read_step" "A parent older than the look-back window is never read"
+assert_contains "$requests" "Any failed call leaves the cursor unchanged."
 hits="$(grep -niE 'search|slack_search' <<<"$read_step")" && fail "step 2 of Review requests searches: $hits"
 assert_contains "$(cat "$SKILL")" '`{globs: [...], grep: [...]}`'
 
