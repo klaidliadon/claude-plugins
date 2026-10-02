@@ -101,19 +101,55 @@ fleet_reviewers() {
   [ -z "$extra" ] || printf '%s\n' "$extra"
 }
 
-# pr_snapshot saves <pr>'s diff to <diff-path>, its changed paths to <diff-path>.names, and prints the head both
-# belong to. When the head moves during the capture it retries once, so head, diff and names are one snapshot.
+# pr_snapshot captures <pr>'s diff, changed paths and head into one directory, <diff-path>.snap.<head>, and prints
+# the head. Readers use <diff-path> and <diff-path>.names, fixed symlinks into the <diff-path>.snap symlink, which one
+# rename points at a finished capture: both paths always name the same capture, and a failed one changes nothing.
 pr_snapshot() {
+  local dir base stage head snap created=0
+  dir="$(dirname "$2")" base="$(basename "$2")"
+  find "$dir" -maxdepth 1 -name "$base.stage.*" -exec rm -rf {} + 2>/dev/null
+  stage="$(mktemp -d "$2.stage.XXXXXX")" && [ -n "$stage" ] || return 1
+  head="$(pr_capture "$1" "$stage")" || { rm -rf "$stage"; return 1; }
+  snap="$base.snap.$head"
+  if [ -d "$dir/$snap" ]; then
+    rm -rf "$stage"
+  else
+    mv "$stage" "$dir/$snap" || { rm -rf "$stage"; return 1; }
+    created=1
+  fi
+  ln -s "$snap" "$stage.lnk" && fleet_rename "$stage.lnk" "$2.snap" ||
+    { rm -f "$stage.lnk"; [ "$created" = 0 ] || rm -rf "${dir:?}/$snap"; return 1; }
+  pr_snapshot_link "$base.snap/diff" "$2" "$stage.diff" && pr_snapshot_link "$base.snap/names" "$2.names" "$stage.names" ||
+    return 1
+  find "$dir" -maxdepth 1 -name "$base.snap.*" ! -name "$snap" -exec rm -rf {} + 2>/dev/null
+  printf '%s\n' "$head"
+}
+
+# pr_capture writes <pr>'s diff, names and head into <dir> and prints the head. When the head moves during the
+# capture it retries once, so the three files are one capture.
+pr_capture() {
   local before after try
   for try in 1 2; do
     before="$(gh pr view "$1" --json headRefOid | jq -r '.headRefOid // empty')" && [ -n "$before" ] || return 1
-    gh pr diff "$1" >"$2" || return 1
-    gh pr diff "$1" --name-only >"$2.names" || return 1
+    gh pr diff "$1" >"$2/diff" || return 1
+    gh pr diff "$1" --name-only >"$2/names" || return 1
     after="$(gh pr view "$1" --json headRefOid | jq -r '.headRefOid // empty')" || return 1
-    [ "$before" != "$after" ] || { printf '%s\n' "$after"; return 0; }
+    [ "$before" != "$after" ] || { printf '%s\n' "$after" >"$2/head" && cat "$2/head"; return; }
   done
   echo "pr_snapshot: the head of $1 moved twice during the capture" >&2
   return 1
+}
+
+# pr_snapshot_link makes <path> a symlink to <target> through the temporary name <tmp>, unless it already is one.
+pr_snapshot_link() {
+  [ "$(readlink "$2" 2>/dev/null)" != "$1" ] || return 0
+  ln -s "$1" "$3" && fleet_rename "$3" "$2" || { rm -f "$3"; return 1; }
+}
+
+# fleet_rename moves <src> over <dst> with one rename(2), which replaces <dst> atomically and never moves <src> into
+# a directory <dst> links to: GNU mv -T, else BSD mv -h.
+fleet_rename() {
+  if mv --version >/dev/null 2>&1; then mv -fT "$1" "$2"; else mv -fh "$1" "$2"; fi
 }
 
 # lock_take creates the mkdir lock <dir> and records LOCK_OWNER in it. A lock older than FLEET_LOCK_TTL seconds
