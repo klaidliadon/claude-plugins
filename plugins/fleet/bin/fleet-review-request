@@ -20,12 +20,17 @@ case "${1:-}" in
     done
     trap 'lock_release "$lock"' EXIT
     if [ ! -s "$id_file" ]; then
-      out="$(orca orchestration run-list --limit 500 --json)" && jq -e '.ok == true' >/dev/null 2>&1 <<<"$out" ||
+      # run-list has no page token (--cursor is a line cursor for new output), so a full list may hide a match.
+      limit=500
+      out="$(orca orchestration run-list --limit "$limit" --json)" && jq -e '.ok == true' >/dev/null 2>&1 <<<"$out" ||
         { echo "fleet-review-request: orca run-list failed" >&2; exit 1; }
       runs="$(o="$objective" jq -c '[.result.runs[]? | select(.objective == env.o)] | sort_by(.created_at)' <<<"$out")"
       id="$(jq -r '.[0].id // empty' <<<"$runs")"
       [ "$(jq length <<<"$runs")" -le 1 ] ||
         echo "fleet-review-request: $(jq length <<<"$runs") Runs are named \"$objective\"; adopted the oldest, $id" >&2
+      listed="$(jq '.result.runs | length' <<<"$out")"
+      [ -n "$id" ] || [ "$listed" -lt "$limit" ] ||
+        { echo "fleet-review-request: run-list returned $listed Runs; it may be truncated, not creating a Run" >&2; exit 1; }
       if [ -z "$id" ]; then
         out="$(orca orchestration run-create --objective "$objective" --json)" &&
           id="$(jq -r 'select(.ok == true) | .result.run.id // empty' <<<"$out" 2>/dev/null)" && [ -n "$id" ] ||

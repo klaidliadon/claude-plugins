@@ -17,8 +17,8 @@ add() {
 }
 
 # A source is a Slack channel ID. C is one character short of the shortest ID, C0; a channel name and a
-# lowercase ID fail too, and no rejection writes the cursor file.
-for bad in C '#some-channel' c0team; do
+# lowercase ID, another first letter and a dash fail too, and no rejection writes the cursor file.
+for bad in C '#some-channel' c0team X0ABC C0-T; do
   for args in "cursor $bad" "cursor $bad 1759312800.000100"; do
     OUT="$("$RR" $args 2>&1)"
     assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: source must be a Slack channel ID: $bad"
@@ -181,6 +181,54 @@ echo '{"ok":false,"error":{"code":"x"}}' >"$T/create-fail.json"
 OUT="$(STUB_ORCA_CREATE="$T/create-fail.json" "$RR" run 2>&1)"
 assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: orca run-create failed"
 assert_fail test -e "$FLEET_HOME/reviews/run.id"
+# run-list has no page token, so a full list of 500 Runs may hide a match: run adopts a match it sees, refuses to
+# create when it sees none, and creates as usual below the limit.
+runs() {
+  jq -n --argjson n "$1" --arg o "reviews $FLEET_HOME" --arg match "$2" '{ok: true, result: {runs: (
+    [range($n) | {id: "run_other_\(.)", objective: "other \(.)", created_at: "2026-09-01T00:00:00Z"}]
+    | if $match == "" then . else .[:-1] + [{id: $match, objective: $o, created_at: "2026-09-02T00:00:00Z"}] end)}}' >"$STUB_ORCA_RUNS"
+}
+runs 500 run_000000000009
+: >"$STUB_LOG"
+assert_eq "$("$RR" run)" run_000000000009
+assert_eq "$(grep -c 'run-create' "$STUB_LOG")" 0
+rm "$FLEET_HOME/reviews/run.id"
+runs 500 ""
+OUT="$("$RR" run 2>&1)"
+assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: run-list returned 500 Runs; it may be truncated, not creating a Run"
+assert_eq "$(grep -c 'run-create' "$STUB_LOG")" 0
+assert_fail test -e "$FLEET_HOME/reviews/run.id"
+runs 499 ""
+assert_eq "$("$RR" run)" run_000000000001
+assert_eq "$(grep -c 'run-create' "$STUB_LOG")" 1
+rm "$FLEET_HOME/reviews/run.id"
+
+# A fresh .run.lock held past the deadline: run gives up, leaves the owner's lock alone and creates nothing.
+# The date stub adds the offset the sleep stub grows, and the lock's future mtime keeps it from going stale.
+mkdir -p "$T/clock"
+echo 0 >"$T/clock/offset"
+cat >"$T/clock/date" <<SH
+#!/usr/bin/env bash
+[ "\$1" = +%s ] || exec $(command -v date) "\$@"
+echo \$((\$($(command -v date) +%s) + \$(cat "$T/clock/offset")))
+SH
+cat >"$T/clock/sleep" <<SH
+#!/usr/bin/env bash
+echo "sleep \$*" >>"\$STUB_LOG"
+echo \$((\$(cat "$T/clock/offset") + 100)) >"$T/clock/offset"
+SH
+chmod +x "$T/clock/date" "$T/clock/sleep"
+mkdir "$FLEET_HOME/reviews/.run.lock"
+echo other.1.1 >"$FLEET_HOME/reviews/.run.lock/owner"
+touch -t "$(date -v+1H +%Y%m%d%H%M 2>/dev/null || date -d '+1 hour' +%Y%m%d%H%M)" "$FLEET_HOME/reviews/.run.lock"
+: >"$STUB_LOG"
+OUT="$(PATH="$T/clock:$PATH" FLEET_LOCK_TTL=60 "$RR" run 2>&1)"
+assert_eq "$?" 1; assert_contains "$OUT" "fleet-review-request: cannot take"
+assert_eq "$(cat "$FLEET_HOME/reviews/.run.lock/owner")" other.1.1
+assert_contains "$(cat "$STUB_LOG")" "sleep 0.2"
+assert_eq "$(grep -c 'run-create' "$STUB_LOG")" 0
+assert_fail test -e "$FLEET_HOME/reviews/run.id"
+rm -rf "$FLEET_HOME/reviews/.run.lock"
 
 # run takes over a stale .run.lock.
 rm -f "$FLEET_HOME/reviews/run.id"
