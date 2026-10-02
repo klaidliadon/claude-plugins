@@ -176,6 +176,15 @@ echo '{"ok":false,"error":{"code":"x"}}' >"$STUB_ORCA_RUNS"
 OUT="$("$RR" run 2>&1)"
 assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: orca run-list failed"
 assert_fail test -e "$FLEET_HOME/reviews/run.id"
+# A reply without a runs array is a failed list, not an empty one: it never creates a Run.
+for reply in '{"ok":true,"result":{}}' '{"ok":true,"result":{"runs":null}}'; do
+  echo "$reply" >"$STUB_ORCA_RUNS"
+  : >"$STUB_LOG"
+  OUT="$("$RR" run 2>&1)"
+  assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: orca run-list failed"
+  assert_eq "$(grep -c 'run-create' "$STUB_LOG")" 0
+  assert_fail test -e "$FLEET_HOME/reviews/run.id"
+done
 echo '{"ok":true,"result":{"runs":[]}}' >"$STUB_ORCA_RUNS"
 echo '{"ok":false,"error":{"code":"x"}}' >"$T/create-fail.json"
 OUT="$(STUB_ORCA_CREATE="$T/create-fail.json" "$RR" run 2>&1)"

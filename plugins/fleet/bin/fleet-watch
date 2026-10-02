@@ -28,7 +28,7 @@ poll() {
     [ -f "$state.failed" ] || { echo "fleet-watch: status failed" || die output; touch "$state.failed" || die state; }
     return 2
   fi
-  rm -f "$state.failed"
+  rm -f "$state.failed" || die state
   awk -F'\t' 'NF == 0 { next } FILENAME == ARGV[1] { old[$1 "/" $2] = $3 "\t" $4; next }
     { k = $1 "/" $2; seen[k] = 1; if (old[k] != $3 "\t" $4) print k ": " $4 }
     END { for (k in old) if (!(k in seen)) print k ": gone"; fflush() }' "$state" <(printf '%s\n' "$now") || die output
@@ -52,7 +52,7 @@ slack_tick() {
       { echo "fleet-watch: config.yaml invalid" || die output; touch "$state.config-failed" || die state; }
     return 2
   fi
-  rm -f "$state.config-failed"
+  rm -f "$state.config-failed" || die state
   [ "${n:-0}" -gt 0 ] || return 1
   now="$(date +%s)"
   last="$(cat "$state.slack" 2>/dev/null || echo 0)"

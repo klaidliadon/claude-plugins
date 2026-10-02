@@ -74,6 +74,7 @@ for term in 'started_at: <now, UTC ISO 8601>}`, then run `gh run rerun <run> --f
   'Last, once the attempt has advanced, set `ci_rerun` to the head and delete `ci_rerun_pending`'; do
   assert_contains "$rerun_row" "$term"
 done
+assert_contains "${rerun_row%%then run \`gh run rerun <run> --failed\`*}" 'if it fails or its JSON has no numeric `attempt`, stop before writing anything'
 state_rule="$(sed -n '/^## State rule/,/^## /p' "$SKILL")"
 for term in '`<diff-path>.snap.<head>`' 'pointing the `<diff-path>.snap` symlink at it with one rename' \
   '`<diff-path>` and `<diff-path>.names` are fixed symlinks into `<diff-path>.snap/`' \
