@@ -64,6 +64,14 @@ assert_contains "$reviews_row" "before starting any reviewer, so a crash keeps t
 assert_contains "$(grep '^| `new commits since review' "$SKILL")" "+refs/pull/<n>/head"
 assert_contains "$(grep '^| `new commits since review' "$SKILL")" "git range-diff"
 assert_contains "$(grep '^| `rerun failed job' "$SKILL")" "gh run rerun <run> --failed"
+rerun_row="$(grep '^| `rerun failed job' "$SKILL")"
+assert_contains "$rerun_row" 'write `ci_rerun_pending: {head: <headRefOid>, run: <run>, attempt:'
+assert_contains "$rerun_row" 'then run `gh run rerun <run> --failed`. Last, set `ci_rerun` to the head and delete `ci_rerun_pending`'
+fill_step="$(grep -F '3. Snapshot the PR before anything reads it' "$SKILL")"
+assert_contains "$fill_step" 'pr_snapshot <pr> <spec dir>/round-1.diff'
+assert_contains "$fill_step" 'fleet_reviewers <repo-path> <pr> <spec dir>/round-1.diff'
+assert_contains "$fill_step" 'DIFF_PATH=<spec dir>/round-1.diff HEAD=<session.reviewed_head>'
+assert_contains "$(grep '^| `restart round <N> (fresh agent)`' "$SKILL")" "filled contract"
 assert_contains "$(cat "$SKILL")" '(Orca answers "capability is revoked") is acked and not recorded'
 assert_contains "$(cat "$SKILL")" "re-arm it on the user's next message, never on a timer"
 assert_contains "$(cat "$SKILL")" '`{globs: [...], grep: [...]}`'

@@ -18,11 +18,15 @@ assert_eq "$out" "fleet-fill: unfilled {{DECISIONS_PATH}}"
 
 out="$("$FILL" "$DIR/templates/review-session.md" PR=https://github.com/o/r/pull/7 REQUEST_LINK=https://slack.example/p1 \
   REVIEW_SKILL=none TASK_DIR=/f/reviews/r-7 REPO_PATH=/w/r REVIEWERS="adversarial, tests, architecture" \
+  DIFF_PATH=/f/reviews/r-7/round-1.diff HEAD=abc123 \
   FOCUS="$(printf 'architecture: a & b\\c\n/x/')")"
 assert_eq "$?" 0
 assert_not_contains "$out" "{{"
 assert_contains "$out" "run these fleet reviewers instead: adversarial, tests, architecture"
 assert_contains "$out" "/w/r as \`<repo-path>\`"
+assert_contains "$out" "The change under review is the diff at /f/reviews/r-7/round-1.diff, saved at head abc123"
+assert_contains "$out" "Every reviewer gets /f/reviews/r-7/round-1.diff as its diff, never the live PR."
+assert_not_contains "$out" "gh pr checkout"
 assert_contains "$out" "$(printf 'architecture: a & b\\c\n/x/')"
 
 assert_contains "$out" "Never write memory: the repo's auto memory is shared and read-only for you."
@@ -33,7 +37,7 @@ assert_contains "$out" "- $rule9"
 
 out="$("$FILL" "$DIR/templates/review-session.md" PR=x 2>&1)"
 assert_eq "$?" 1
-assert_eq "$out" "fleet-fill: unfilled {{FOCUS}} {{REPO_PATH}} {{REQUEST_LINK}} {{REVIEWERS}} {{REVIEW_SKILL}} {{TASK_DIR}}"
+assert_eq "$out" "fleet-fill: unfilled {{DIFF_PATH}} {{FOCUS}} {{HEAD}} {{REPO_PATH}} {{REQUEST_LINK}} {{REVIEWERS}} {{REVIEW_SKILL}} {{TASK_DIR}}"
 
 out="$("$FILL" "$DIR/prompts/spec-review.md" SPEC_PATH=/f/obj/1-a/spec.md SIBLINGS=none BASE=release/2 \
   OUT_PATH=/f/obj/1-a/spec-review.md)"

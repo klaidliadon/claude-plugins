@@ -159,6 +159,42 @@ OUT="$(STUB_ORCA_CREATE="$T/create-fail.json" "$RR" run 2>&1)"
 assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: orca run-create failed"
 assert_fail test -e "$FLEET_HOME/reviews/run.id"
 
+# run takes over a stale .run.lock.
+rm -f "$FLEET_HOME/reviews/run.id"
+mkdir "$FLEET_HOME/reviews/.run.lock"
+touch -t 202001010000 "$FLEET_HOME/reviews/.run.lock"
+assert_eq "$("$RR" run)" run_000000000001
+assert_fail test -e "$FLEET_HOME/reviews/.run.lock"
+
+# Two contenders against one stale lock: exactly one takes it, and the loser's release never removes it.
+# A stat stub that answers late makes both read the lock as stale before either breaks it.
+source "$DIR/bin/lib.sh"
+mkdir -p "$T/slowstat"
+printf '#!/usr/bin/env bash\nout="$(%s "$@")"; rc=$?\nsleep 0.3\nprintf "%%s\\n" "$out"\nexit $rc\n' "$(command -v stat)" >"$T/slowstat/stat"
+chmod +x "$T/slowstat/stat"
+for i in 1 2 3; do
+  L="$T/race-$i"
+  mkdir "$L"
+  touch -t 202001010000 "$L"
+  for c in a b; do
+    (PATH="$T/slowstat:$PATH"; lock_take "$L" && { echo "$c" >>"$T/race-$i.won"; sleep 1; }; lock_release "$L") &
+  done
+  wait
+  assert_eq "$(wc -l <"$T/race-$i.won" | tr -d ' ')" 1
+done
+L="$T/owned"
+lock_take "$L"
+mine="$LOCK_OWNER"
+LOCK_OWNER=someone-else lock_release "$L"
+assert_ok test -d "$L"
+LOCK_OWNER="$mine" lock_release "$L"
+assert_fail test -e "$L"
+# A crash mid-takeover leaves a stale breaker; the next taker clears it.
+mkdir "$L" "$L.break"
+touch -t 202001010000 "$L" "$L.break"
+assert_ok lock_take "$L"
+assert_fail test -e "$L.break"
+
 echo '[1]' >"$FLEET_HOME/review-requests.cursor"
 assert_fail "$RR" cursor "#team" 1759316400.000300 2>/dev/null
 assert_eq "$(cat "$FLEET_HOME/review-requests.cursor")" "[1]"

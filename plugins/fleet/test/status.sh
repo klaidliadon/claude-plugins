@@ -106,6 +106,20 @@ STUB_GH_FAIL="pr view" "$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
 assert_eq "$?" 1
 assert_eq "$(grep -c 'gh pr view' "$STUB_LOG")" 1
 assert_eq "$(cat "$T/err")" "fleet-status: gh pr view https://github.com/o/r/pull/7 failed: no output"
+# The dependency lookup retries the same way.
+mkdir -p "$FLEET_HOME/obj/2-web"
+printf -- '---\nobjective: obj\ntask: 2-web\nrepo: app\napproved_at: "2026-09-30T19:00:00Z"\ndepends_on: [1-api]\n---\nbody\n' >"$FLEET_HOME/obj/2-web/spec.md"
+echo '{"state":"OPEN"}' >"$T/dep-open.json"
+printf '%s\n' "$FX/gh/pr-open.json" 5xx "$T/dep-open.json" >"$STUB_GH_QUEUE"
+out="$("$DIR/bin/fleet-status" --tsv 2>"$T/err")"
+assert_eq "$?" 0
+assert_contains "$out" $'obj\t2-web\twaiting\tblocked on 1-api merge'
+assert_eq "$(cat "$T/err")" ""
+printf '%s\n' "$FX/gh/pr-open.json" 5xx 5xx >"$STUB_GH_QUEUE"
+"$DIR/bin/fleet-status" --tsv >/dev/null 2>"$T/err"
+assert_eq "$?" 1
+assert_eq "$(cat "$T/err")" "fleet-status: gh pr view https://github.com/o/r/pull/7 failed: HTTP 502: Bad Gateway (https://api.github.com/graphql)"
+rm -r "$FLEET_HOME/obj/2-web"
 unset STUB_GH_QUEUE
 
 STUB_ORCA_FAIL=1 "$DIR/bin/fleet-status" >/dev/null 2>"$T/err"

@@ -124,6 +124,7 @@ reviewers:
   security: {grep: [Password, "x-api-key"]}
   architecture: {globs: ["schema/**"]}
   docs: ["docs/**"]
+  data: {globs: ["new-dir:apps/*"], grep: [migration]}
 YAML
 cat >"$T/grep.diff" <<'DIFF'
 diff --git a/pkg/password.go b/pkg/password.go
@@ -152,6 +153,8 @@ diff --git a/schema/x.sql b/schema/x.sql
 --- drop
 +-- create
 DIFF
+for d in grep context; do echo pkg/password.go >"$T/$d.diff.names"; done
+echo schema/x.sql >"$T/schema.diff.names"
 : >"$STUB_LOG"
 assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/grep.diff" | paste -sd, -)" "adversarial,tests,security"
 assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/schema.diff" | paste -sd, -)" "adversarial,tests,architecture"
@@ -159,7 +162,27 @@ assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/context.diff" | paste -sd, -)" 
 assert_not_contains "$(cat "$STUB_LOG")" "gh pr diff"
 assert_eq "$(reviewers docs/a.md pkg/password.go)" "adversarial,tests,docs"
 printf 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +0,0 @@\n-send X-API-KEY header\n' >"$T/removed.diff"
+echo a >"$T/removed.diff.names"
 assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/removed.diff" | paste -sd, -)" "adversarial,tests,security"
+# Paths come from the names snapshot, so a pure rename, a binary change and a path with a space still match globs.
+printf 'diff --git a/docs/old.md b/docs/new.md\nsimilarity index 100%%\nrename from docs/old.md\nrename to docs/new.md\n' >"$T/rename.diff"
+echo docs/new.md >"$T/rename.diff.names"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/rename.diff" | paste -sd, -)" "adversarial,tests,docs"
+printf 'diff --git a/schema/a b.png b/schema/a b.png\nBinary files a/schema/a b.png and b/schema/a b.png differ\n' >"$T/binary.diff"
+echo 'schema/a b.png' >"$T/binary.diff.names"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/binary.diff" | paste -sd, -)" "adversarial,tests,architecture"
+rm "$T/binary.diff.names"
+out="$(fleet_reviewers "$T/repo" "$PR" "$T/binary.diff" 2>&1)"
+assert_eq "$?" 1; assert_eq "$out" "fleet_reviewers: no $T/binary.diff.names; save the diff with pr_snapshot"
+# One map can carry new-dir globs and grep terms: either selects it.
+printf 'diff --git a/pkg/x.go b/pkg/x.go\n--- a/pkg/x.go\n+++ b/pkg/x.go\n@@ -1 +1 @@\n-a\n+run Migration 7\n' >"$T/mig.diff"
+echo pkg/x.go >"$T/mig.diff.names"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/mig.diff" | paste -sd, -)" "adversarial,tests,data"
+printf 'diff --git a/apps/fresh/main.go b/apps/fresh/main.go\n--- /dev/null\n+++ b/apps/fresh/main.go\n@@ -0,0 +1 @@\n+package main\n' >"$T/newdir.diff"
+echo apps/fresh/main.go >"$T/newdir.diff.names"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/newdir.diff" | paste -sd, -)" "adversarial,tests,data"
+echo apps/billing/x.go >"$T/newdir.diff.names"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/newdir.diff" | paste -sd, -)" "adversarial,tests"
 printf 'reviewers:\n  security: {grep: [secret]}\n' >"$T/repo/.agents/fleet.yaml"
 assert_eq "$(reviewers pkg/secret.go)" "adversarial,tests"
 cp "$T/fleet.yaml" "$T/repo/.agents/fleet.yaml"

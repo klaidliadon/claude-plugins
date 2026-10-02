@@ -77,7 +77,7 @@ assert_eq "$?" 0
 assert_eq "$(grep -c '^idle: waiting on user$' <<<"$out")" 1
 assert_eq "$(tail -1 <<<"$out")" "idle: waiting on user"
 assert_eq "$(wc -l <<<"$out" | tr -d ' ')" 9
-# Not idle: a live worker behind a gated row, one actionable row, or a configured Slack source.
+# Not idle: a live worker behind a gated row, or one actionable row.
 not_idle() {
   out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
   assert_not_contains "$out" "idle:"
@@ -92,10 +92,11 @@ cp "$T/tsv.gated" "$T/tsv"
 printf 'obj\t9-i\treview\task review\tfalse\n' >>"$T/tsv"
 not_idle
 cp "$T/tsv.gated" "$T/tsv"
+# A Slack source does not keep the watch alive: the manager re-arms it on the user's next message.
 printf 'review_requests:\n  sources: [{slack: "#t", repos: [o/r]}]\n' >"$FLEET_HOME/config.yaml"
-not_idle
-echo 'review_requests: [unclosed' >"$FLEET_HOME/config.yaml"
-not_idle
+echo $(date +%s) >"$T/idle-state.slack"
+out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
+assert_eq "$out" $'obj/9-i: gone\nidle: waiting on user'
 rm "$FLEET_HOME/config.yaml"
 out="$("$DIR/bin/fleet-watch" --once --state "$T/idle-state")"
 assert_eq "$out" "idle: waiting on user"

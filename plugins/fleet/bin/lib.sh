@@ -55,8 +55,9 @@ GLOB_RE='def glob_re: gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*
 # fleet_reviewers prints adversarial, tests, then every reviewer whose fleet_repo_config rules match the PR.
 # A reviewer's rule is a glob list or {globs, grep}. A glob matches a changed path or any of its parent directories.
 # A new-dir:<glob> entry matches a directory the PR creates: a parent directory of a changed path that matches the glob
-# and is absent on the fetched base branch. With <diff-path>, the changed paths come from that saved diff, and a grep
-# term matches an added or removed line, case-insensitive and as a fixed string. Without it, grep terms never match.
+# and is absent on the fetched base branch. With <diff-path>, the changed paths come from the <diff-path>.names file
+# pr_snapshot saved beside it, and a grep term matches an added or removed line of the diff, case-insensitive and as
+# a fixed string. Without it, the paths come from the live PR and grep terms never match.
 fleet_reviewers() {
   local cfg rules files lines='[]' parsed pr base d added="" extra=""
   cfg="$(fleet_repo_config "$1")"
@@ -65,10 +66,10 @@ fleet_reviewers() {
     rules="$(jq -c 'map_values(if type == "array" then {globs: ., grep: []} else {globs: (.globs // []), grep: (.grep // [])} end)' \
       <<<"$rules")" || return 1
     if [ -n "${3:-}" ]; then
-      parsed="$(awk '/^diff --git /{h=1; next} /^@@/{h=0; next}
-        h && /^(---|\+\+\+) [ab]\//{print "F\t" substr($0, 7); next} !h && /^[-+]/{print "L\t" substr($0, 2)}' "$3")" || return 1
-      files="$(jq -Rsc '[split("\n")[] | select(startswith("F\t")) | .[2:]] | unique' <<<"$parsed")"
-      lines="$(jq -Rsc '[split("\n")[] | select(startswith("L\t")) | .[2:] | ascii_downcase]' <<<"$parsed")"
+      [ -f "$3.names" ] || { echo "fleet_reviewers: no $3.names; save the diff with pr_snapshot" >&2; return 1; }
+      files="$(jq -Rsc 'split("\n") | map(select(. != ""))' <"$3.names")"
+      lines="$(awk '/^diff --git /{h=1; next} /^@@/{h=0; next} !h && /^[-+]/{print substr($0, 2)}' "$3" |
+        jq -Rsc 'split("\n") | map(select(. != "") | ascii_downcase)')" || return 1
     else
       files="$(gh pr diff "$2" --name-only)" || return 1
       files="$(jq -Rsc 'split("\n") | map(select(. != ""))' <<<"$files")"
@@ -100,13 +101,14 @@ fleet_reviewers() {
   [ -z "$extra" ] || printf '%s\n' "$extra"
 }
 
-# pr_snapshot saves <pr>'s diff to <diff-path> and prints the head that diff belongs to. When the head moves during
-# the capture it retries once, so the printed head and the saved diff are always one snapshot.
+# pr_snapshot saves <pr>'s diff to <diff-path>, its changed paths to <diff-path>.names, and prints the head both
+# belong to. When the head moves during the capture it retries once, so head, diff and names are one snapshot.
 pr_snapshot() {
   local before after try
   for try in 1 2; do
     before="$(gh pr view "$1" --json headRefOid | jq -r '.headRefOid // empty')" && [ -n "$before" ] || return 1
     gh pr diff "$1" >"$2" || return 1
+    gh pr diff "$1" --name-only >"$2.names" || return 1
     after="$(gh pr view "$1" --json headRefOid | jq -r '.headRefOid // empty')" || return 1
     [ "$before" != "$after" ] || { printf '%s\n' "$after"; return 0; }
   done
@@ -114,13 +116,30 @@ pr_snapshot() {
   return 1
 }
 
-# lock_take creates the mkdir lock <dir>. A lock older than FLEET_LOCK_TTL seconds (default 300) is stale: it is
-# removed and taken over.
+# lock_take creates the mkdir lock <dir> and records LOCK_OWNER in it. A lock older than FLEET_LOCK_TTL seconds
+# (default 300) is stale. Taking one over happens under <dir>.break, re-checked inside, so two contenders cannot
+# both break the same stale lock.
 lock_take() {
+  LOCK_OWNER="$$.$(date +%s).$RANDOM"
+  if ! mkdir "$1" 2>/dev/null; then
+    lock_stale "$1.break" && rm -rf "$1.break"
+    mkdir "$1.break" 2>/dev/null || return 1
+    if ! lock_stale "$1"; then rm -rf "$1.break"; return 1; fi
+    rm -rf "$1"
+    mkdir "$1" 2>/dev/null || { rm -rf "$1.break"; return 1; }
+    rm -rf "$1.break"
+  fi
+  printf '%s\n' "$LOCK_OWNER" >"$1/owner"
+}
+
+# lock_stale succeeds when <dir> exists and is older than FLEET_LOCK_TTL seconds.
+lock_stale() {
   local m
-  mkdir "$1" 2>/dev/null && return 0
   m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
-  [ $(($(date +%s) - m)) -gt "${FLEET_LOCK_TTL:-300}" ] || return 1
-  rm -rf "$1"
-  mkdir "$1" 2>/dev/null
+  [ $(($(date +%s) - m)) -gt "${FLEET_LOCK_TTL:-300}" ]
+}
+
+# lock_release removes <dir> only while it still holds this process's LOCK_OWNER, never a lock taken over since.
+lock_release() {
+  [ "$(cat "$1/owner" 2>/dev/null)" != "${LOCK_OWNER:-}" ] || rm -rf "$1"
 }
