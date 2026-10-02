@@ -2,10 +2,33 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-usage="usage: fleet-review-request cursor <source> [<ts>] | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
+usage="usage: fleet-review-request run | cursor <source> [<ts>] | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
 cursor="$FLEET_HOME/review-requests.cursor"
 
 case "${1:-}" in
+  run)
+    # One reviews Run per FLEET_HOME: creators serialize on a lock and re-read run.id once they hold it.
+    id_file="$FLEET_HOME/reviews/run.id" lock="$FLEET_HOME/reviews/.run.lock" objective="reviews $FLEET_HOME"
+    mkdir -p "$FLEET_HOME/reviews"
+    until lock_take "$lock"; do sleep 0.2; done
+    trap 'rm -rf "$lock"' EXIT
+    if [ ! -s "$id_file" ]; then
+      out="$(orca orchestration run-list --limit 500 --json)" && jq -e '.ok == true' >/dev/null 2>&1 <<<"$out" ||
+        { echo "fleet-review-request: orca run-list failed" >&2; exit 1; }
+      runs="$(o="$objective" jq -c '[.result.runs[]? | select(.objective == env.o)] | sort_by(.created_at)' <<<"$out")"
+      id="$(jq -r '.[0].id // empty' <<<"$runs")"
+      [ "$(jq length <<<"$runs")" -le 1 ] ||
+        echo "fleet-review-request: $(jq length <<<"$runs") Runs are named \"$objective\"; adopted the oldest, $id" >&2
+      if [ -z "$id" ]; then
+        out="$(orca orchestration run-create --objective "$objective" --json)" &&
+          id="$(jq -r 'select(.ok == true) | .result.run.id // empty' <<<"$out" 2>/dev/null)" && [ -n "$id" ] ||
+          { echo "fleet-review-request: orca run-create failed" >&2; exit 1; }
+      fi
+      printf '%s\n' "$id" >"$id_file.tmp"
+      mv "$id_file.tmp" "$id_file"
+    fi
+    cat "$id_file"
+    ;;
   cursor)
     src="${2:?$usage}"
     if [ $# -eq 2 ]; then
@@ -28,7 +51,7 @@ case "${1:-}" in
     repos="$(src="$src" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")')"
     [[ " $repos " == *" $slug "* ]] || skip "$slug is not configured for $src"
     mkdir -p "$FLEET_HOME/reviews"
-    mkdir "$lock" 2>/dev/null || { echo "fleet-review-request: $lock is held; remove it if no add is running" >&2; exit 1; }
+    lock_take "$lock" || { echo "fleet-review-request: $lock is held; it goes stale after ${FLEET_LOCK_TTL:-300}s" >&2; exit 1; }
     tmp=""
     trap 'rm -rf "$lock" ${tmp:+"$tmp"}' EXIT
     [ ! -e "$dir/spec.md" ] || skip "already tracked in $dir/spec.md"

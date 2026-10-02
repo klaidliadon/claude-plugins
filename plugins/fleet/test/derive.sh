@@ -21,7 +21,7 @@ for i in $(seq 0 $((n - 1))); do
     [ "$want" = "$have" ] || fail "$name: $k want '$want' got '$have'"
   done
   raw="$(jq -r .next <<<"$got")"
-  next="$(sed -E 's/round [0-9]+/round <N>/; s/^blocked on .* merge$/blocked on <tasks> merge/; s/--id [^ ]+$/--id <run>/' <<<"$raw")"
+  next="$(sed -E 's/round [0-9]+/round <N>/; s/^blocked on .* merge$/blocked on <tasks> merge/; s/--id [^ ]+$/--id <run>/; s/^rerun failed job: .*/rerun failed job: <job>/' <<<"$raw")"
   row_for "$raw" && next="$raw"
   case "$next" in
     *inspect) row_for 'anything ending in `inspect`' "$SKILL" || fail "$name: SKILL.md has no inspect row" ;;

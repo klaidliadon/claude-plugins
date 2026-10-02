@@ -3,7 +3,7 @@ Review {{PR}}, requested in {{REQUEST_LINK}}, and talk the findings through with
 
 ## Steps
 1. Check out the PR in this worktree with `gh pr checkout {{PR}}`. Read the repo's AGENTS.md, the PR description, and any existing reviews. Confirm or challenge what other reviewers said; do not just repeat it.
-2. Review skill: `{{REVIEW_SKILL}}`. If it names a skill, run it on the PR and follow it. If it is `none`, run these fleet reviewers instead: {{REVIEWERS}}. Run each Claude reviewer as a `fleet-reviewer-<name>` subagent and `adversarial` as the fleet-manager skill's adversarial step says, with {{TASK_DIR}} as the task directory and {{REPO_PATH}} as `<repo-path>`, never this worktree.
+2. Review skill: `{{REVIEW_SKILL}}`. If it names a skill, run it on the PR and follow it. If it is `none`, run these fleet reviewers instead: {{REVIEWERS}}. Run each Claude reviewer as a `fleet-reviewer-<name>` subagent and `adversarial` as the fleet-manager skill's adversarial step says, with {{TASK_DIR}} as the task directory and {{REPO_PATH}} as `<repo-path>`, never this worktree. Every reviewer reads the diff `pr_snapshot` saved, never the live PR.
 3. Repo focus, appended to the matching reviewer's prompt: {{FOCUS}}
 
 ## Constraints

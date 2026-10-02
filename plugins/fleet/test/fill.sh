@@ -50,6 +50,10 @@ assert_eq "$?" 0
 assert_contains "$out" "Never write memory"
 assert_contains "$out" "learned: <fact>"
 assert_not_contains "$out" "{{"
+out="$("$FILL" "$DIR/templates/worker-contract.md" TASK_DIR=/t ROUND=2 ROUND_INPUT="/t/review-1-tests.md")"
+assert_contains "$out" "When the round below is greater than 1, fix the listed findings with the smallest change that does it."
+assert_contains "$out" "Add no new Make targets, modules or docs unless a finding asks for them."
+assert_contains "$out" $'Round: 2\n/t/review-1-tests.md'
 "$FILL" "$DIR/templates/worker-contract.md" TASK_DIR >/dev/null 2>&1
 assert_eq "$?" 2
 

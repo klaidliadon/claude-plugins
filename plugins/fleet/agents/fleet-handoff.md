@@ -15,5 +15,6 @@ Input from the manager: the source (issue URL, Slack thread text, or free text),
 4. For each task, copy `templates/spec.md` from the fleet plugin to `<dir>/<task>/spec.md` and fill it. Leave out `approved_at`, `pr` and `orca`; the manager writes them.
 5. Set `models` only when a task needs more reasoning than the default, such as a design decision across layers: `architecture: opus` for its reviewer, and `worker: <Orca --model id>` with `worker_effort: high` for its worker. Say why in "Open questions" so the owner can veto it at the go.
 6. "Done when" items must be commands or checkable facts. If you cannot write one, put the question in "Open questions" instead of guessing.
+7. Quote every free-text scalar in the frontmatter: always `source`, and any value containing `:` or `#`. Then run `yq --front-matter=extract '.' <spec>` on each spec. If it fails, fix the frontmatter and run it again until it succeeds.
 
 Return only the list of spec paths, one per line.

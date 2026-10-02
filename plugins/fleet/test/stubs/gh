@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 echo "gh $*" >>"$STUB_LOG"
 [ "${STUB_GH_FAIL:-}" != "$1 $2" ] || exit 1
+# STUB_GH_QUEUE holds one reply per line, consumed in order: 5xx (an HTTP 502), html (a non-JSON page), or a file to print.
+if [ -s "${STUB_GH_QUEUE:-}" ]; then
+  next="$(head -1 "$STUB_GH_QUEUE")"
+  tail -n +2 "$STUB_GH_QUEUE" >"$STUB_GH_QUEUE.tmp" && mv "$STUB_GH_QUEUE.tmp" "$STUB_GH_QUEUE"
+  case "$next" in
+    5xx) echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2; exit 1 ;;
+    html) echo "<html><body>Unicorn!</body></html>"; exit 0 ;;
+    *) cat "$next"; exit 0 ;;
+  esac
+fi
 case "$1 $2" in
   "pr view") cat "$STUB_GH_PR" ;;
   "pr diff") cat "$STUB_GH_DIFF" ;;

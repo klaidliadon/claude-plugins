@@ -3,8 +3,6 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$DIR/test/testlib.sh"
 export PATH="$DIR/test/stubs:$PATH"
 
-T="$(mktemp -d "${TMPDIR:-/tmp}/fleet-test.XXXXXX")" || exit 1
-export FLEET_HOME="$T/fleet"
 source "$DIR/bin/lib.sh"
 export STUB_LOG="$T/log" STUB_GH_DIFF="$T/diff" STUB_GH_PR="$T/pr.json"
 echo '{"baseRefName":"main"}' >"$STUB_GH_PR"
@@ -76,6 +74,18 @@ out="$(fleet_reviewers "$T/repo" "$PR" 2>&1)"
 assert_eq "$?" 1; assert_eq "$out" "fleet_reviewers: cannot fetch origin/gone in $T/repo"
 echo '{"baseRefName":"main"}' >"$STUB_GH_PR"
 
+# The base fetch must advance origin/main even when remote.origin.fetch maps only another branch.
+git -C "$T/other" push -q origin HEAD:other 2>/dev/null
+git -C "$T/repo" config remote.origin.fetch '+refs/heads/other:refs/remotes/origin/other'
+mkdir -p "$T/other/apps/audit"
+touch "$T/other/apps/audit/main.go"
+git -C "$T/other" add apps
+git -C "$T/other" -c commit.gpgsign=false commit -q -m audit
+git -C "$T/other" push -q origin HEAD:main 2>/dev/null
+assert_eq "$(reviewers apps/audit/rpc.go)" "adversarial,tests"
+assert_eq "$(git -C "$T/repo" rev-parse refs/remotes/origin/main)" "$(git -C "$T/other" rev-parse HEAD)"
+git -C "$T/repo" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+
 cp "$T/repo/.agents/fleet.yaml" "$T/fleet.yaml"
 cat >"$T/repo/.agents/fleet.yaml" <<'YAML'
 reviewers:
@@ -107,6 +117,52 @@ assert_eq "$(fleet_focus "$T/repo" "it's \"odd\"")" "quoted"
 assert_eq "$(fleet_focus "$T/repo" architecture)" "Check the gateway."
 assert_eq "$(fleet_focus "$T/repo" security)" ""
 assert_eq "$(fleet_focus "$T/nowhere" architecture)" ""
+
+# A reviewer rule may be a map of globs and grep terms; grep terms match only added or removed lines of a saved diff.
+cat >"$T/repo/.agents/fleet.yaml" <<'YAML'
+reviewers:
+  security: {grep: [Password, "x-api-key"]}
+  architecture: {globs: ["schema/**"]}
+  docs: ["docs/**"]
+YAML
+cat >"$T/grep.diff" <<'DIFF'
+diff --git a/pkg/password.go b/pkg/password.go
+--- a/pkg/password.go
++++ b/pkg/password.go
+@@ -1,3 +1,3 @@
+ func check() {
+-	old := 1
++	pw := readPASSWORD()
+ }
+DIFF
+cat >"$T/context.diff" <<'DIFF'
+diff --git a/pkg/password.go b/pkg/password.go
+--- a/pkg/password.go
++++ b/pkg/password.go
+@@ -1,3 +1,3 @@
+ // password handling
+-	a := 1
++	a := 2
+DIFF
+cat >"$T/schema.diff" <<'DIFF'
+diff --git a/schema/x.sql b/schema/x.sql
+--- a/schema/x.sql
++++ b/schema/x.sql
+@@ -1 +1 @@
+--- drop
++-- create
+DIFF
+: >"$STUB_LOG"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/grep.diff" | paste -sd, -)" "adversarial,tests,security"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/schema.diff" | paste -sd, -)" "adversarial,tests,architecture"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/context.diff" | paste -sd, -)" "adversarial,tests"
+assert_not_contains "$(cat "$STUB_LOG")" "gh pr diff"
+assert_eq "$(reviewers docs/a.md pkg/password.go)" "adversarial,tests,docs"
+printf 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +0,0 @@\n-send X-API-KEY header\n' >"$T/removed.diff"
+assert_eq "$(fleet_reviewers "$T/repo" "$PR" "$T/removed.diff" | paste -sd, -)" "adversarial,tests,security"
+printf 'reviewers:\n  security: {grep: [secret]}\n' >"$T/repo/.agents/fleet.yaml"
+assert_eq "$(reviewers pkg/secret.go)" "adversarial,tests"
+cp "$T/fleet.yaml" "$T/repo/.agents/fleet.yaml"
 
 git init -q "$T/cfg"
 assert_eq "$(fleet_repo_config "$T/cfg")" ""
