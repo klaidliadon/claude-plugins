@@ -1,0 +1,11 @@
+{
+  "id": "00000000-0000-0000-0000-000000000103",
+  "ok": false,
+  "error": {
+    "code": "consumer_fenced",
+    "message": "This terminal is attested as term_000000000003 and cannot act as term_000000000001.",
+    "data": {
+      "effectsApplied": false
+    }
+  }
+}
