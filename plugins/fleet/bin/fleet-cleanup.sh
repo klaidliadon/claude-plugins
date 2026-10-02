@@ -46,7 +46,8 @@ if [ "$(git -C "$path" rev-parse HEAD)" != "$head" ]; then
 fi
 shown="$(orca worktree show --worktree "identity:$identity" --json | jq -r ".result.worktree.path // empty")"
 [ -n "$shown" ] && [ "$(cd "$shown" 2>/dev/null && pwd -P)" = "$(cd "$path" && pwd -P)" ] || refuse "identity $identity is not $path"
-hook="$(yaml_get "$primary/.agents/fleet.yaml" .cleanup)" || refuse "cannot read $primary/.agents/fleet.yaml"
+cfg="$(fleet_repo_config "$primary")"
+hook="$(yaml_get "$cfg" .cleanup)" || refuse "cannot read $cfg"
 [ -z "$hook" ] || [ -x "$primary/$hook" ] || refuse "cleanup hook $hook is not executable"
 
 objtask="$(fm_get "$spec" '.objective')/$(fm_get "$spec" '.task')"

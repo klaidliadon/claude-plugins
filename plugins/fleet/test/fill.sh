@@ -25,9 +25,25 @@ assert_contains "$out" "run these fleet reviewers instead: adversarial, tests, a
 assert_contains "$out" "/w/r as \`<repo-path>\`"
 assert_contains "$out" "$(printf 'architecture: a & b\\c\n/x/')"
 
+assert_contains "$out" "Never write memory: the repo's auto memory is shared and read-only for you."
+assert_contains "$out" "\`learned: <fact>\` lines; the manager decides what to keep."
+rule9="$(sed -n 's/^9\. //p' "$DIR/templates/worker-contract.md")"
+assert_contains "$rule9" "Never write memory"
+assert_contains "$out" "- $rule9"
+
 out="$("$FILL" "$DIR/templates/review-session.md" PR=x 2>&1)"
 assert_eq "$?" 1
 assert_eq "$out" "fleet-fill: unfilled {{FOCUS}} {{REPO_PATH}} {{REQUEST_LINK}} {{REVIEWERS}} {{REVIEW_SKILL}} {{TASK_DIR}}"
+
+out="$("$FILL" "$DIR/prompts/spec-review.md" SPEC_PATH=/f/obj/1-a/spec.md SIBLINGS=none BASE=release/2 \
+  OUT_PATH=/f/obj/1-a/spec-review.md)"
+assert_eq "$?" 0
+assert_not_contains "$out" "{{"
+assert_contains "$out" "Base branch: \`origin/release/2\`"
+assert_contains "$out" "checked against \`origin/release/2\`"
+out="$("$FILL" "$DIR/prompts/spec-review.md" SPEC_PATH=x SIBLINGS=x OUT_PATH=x 2>&1)"
+assert_eq "$?" 1
+assert_eq "$out" "fleet-fill: unfilled {{BASE}}"
 
 out="$("$FILL" "$DIR/templates/worker-contract.md" TASK_DIR=/t ROUND=1 ROUND_INPUT="")"
 assert_eq "$?" 0

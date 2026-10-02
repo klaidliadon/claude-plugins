@@ -42,6 +42,16 @@ out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "🟡2 🟢1"
 assert_contains "$out" "#7"
 
+jq '.headRefOid = "bbb"' "$FX/gh/pr-open.json" >"$T/pr-head.json"
+yq --front-matter=process -i '.orca[0].pushed_head = "aaa" | .orca[0].reviewed_head = "aaa"' "$TD/spec.md"
+out="$(STUB_GH_PR="$T/pr-head.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\tnew commits since review: inspect'
+assert_contains "$(cat "$STUB_LOG")" "--json number,state,headRefOid,"
+yq --front-matter=process -i '.orca[0].reviewed_head = "bbb"' "$TD/spec.md"
+out="$(STUB_GH_PR="$T/pr-head.json" "$DIR/bin/fleet-status" --tsv)"
+assert_contains "$out" $'obj\t1-api\tin-review\tstart fix round 2'
+yq --front-matter=process -i 'del(.orca[0].pushed_head) | del(.orca[0].reviewed_head)' "$TD/spec.md"
+
 STUB_ORCA_CHECK="$FX/orca/check-all.json" out="$("$DIR/bin/fleet-status")"
 assert_contains "$out" "1 ask"
 assert_contains "$out" "answer question"

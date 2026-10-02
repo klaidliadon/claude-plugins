@@ -115,6 +115,22 @@ assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"; assert_fail test 
 setup; echo 'review_skill: review' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
 
+# The origin remote is $T/origin.git, so the personal file is repos/<basename of $T>/origin.yaml.
+personal() {
+  mkdir -p "$FLEET_HOME/repos/$(basename "$T")"
+  echo "$1" >"$FLEET_HOME/repos/$(basename "$T")/origin.yaml"
+}
+setup; rm "$T/repo/.agents/fleet.yaml"; personal 'cleanup: scripts/worktree-db-cleanup.sh'; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_ok test -f "$T/db-cleanup-called"
+
+setup; personal 'review_skill: review'; run_cleanup "$SPEC"
+assert_eq "$RC" 0; assert_not_contains "$OUT" "worktree-db-cleanup"
+run_cleanup --apply "$SPEC"
+assert_eq "$RC" 0; assert_fail test -f "$T/db-cleanup-called"
+
+setup; personal 'cleanup: [unclosed'; run_cleanup --apply "$SPEC"
+assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cannot read $FLEET_HOME/repos/$(basename "$T")/origin.yaml"
+
 setup; echo 'cleanup: [unclosed' >"$T/repo/.agents/fleet.yaml"; run_cleanup --apply "$SPEC"
 assert_eq "$RC" 1; assert_contains "$OUT" "refuse: cannot read"
 assert_ok test -d "$T/wt"; assert_not_contains "$(cat "$STUB_LOG")" "worktree rm"

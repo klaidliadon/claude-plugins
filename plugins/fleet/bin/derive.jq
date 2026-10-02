@@ -18,6 +18,12 @@ def stalled($r):
   .stall_after != null and $r.last_output_at != null and $r.agent_wait != true
   and (.now - ([$r.last_output_at, $r.dispatched_at] | max)) > .stall_after;
 def stopped($r): ($r.stopped // false) or $r.status == "blocked";
+# unreviewed_push: the PR head moved past both the last reviewed head and the head the latest worker reported.
+# It waits for the latest worker's pushed_head, so a running or unacked round never counts its own push.
+def unreviewed_push($w):
+  ([workers[] | .reviewed_head // empty] | last) as $rh
+  | $rh != null and $w.pushed_head != null and .pr.head != null
+    and .pr.head != $rh and .pr.head != $w.pushed_head;
 
 . as $t
 | (workers | last) as $w
@@ -51,6 +57,7 @@ def stopped($r): ($r.stopped // false) or $r.status == "blocked";
      {state: $working, next: (if stalled($w) then "worker stalled: inspect" else "wait worker" end)}
    elif $w.status != "completed" then {state: "dispatched", next: "worker \($w.status): inspect"}
    elif .pr == null then {state: "dispatched", next: "worker done without PR: inspect"}
+   elif unreviewed_push($w) then {state: "in-review", next: "new commits since review: inspect"}
    elif (reviews_done($w) | not) then {state: "in-review", next: "run reviews round \($w.round)"}
    elif blocking($w) > 0 then
      (if $w.round >= 3 then {state: "in-review", next: "escalate: 3 rounds not clean"}

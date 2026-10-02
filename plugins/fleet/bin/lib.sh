@@ -30,8 +30,19 @@ fleet_config() {
   yaml_get "$FLEET_HOME/config.yaml" "$1"
 }
 
+# fleet_repo_config prints the fleet.yaml for <repo-path>: $FLEET_HOME/repos/<owner>/<repo>.yaml, named after the origin
+# remote, else <repo-path>/.agents/fleet.yaml, else nothing. The first file found wins; the two are never merged.
+fleet_repo_config() {
+  local url personal
+  if url="$(git -C "$1" remote get-url origin 2>/dev/null)" && [[ "$url" =~ [:/]([^/:]+)/([^/]+)$ ]]; then
+    personal="$FLEET_HOME/repos/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}.yaml"
+    [ ! -f "$personal" ] || { printf '%s\n' "$personal"; return 0; }
+  fi
+  [ ! -f "$1/.agents/fleet.yaml" ] || printf '%s\n' "$1/.agents/fleet.yaml"
+}
+
 fleet_focus() {
-  name="$2" yaml_get "$1/.agents/fleet.yaml" '.focus[strenv(name)]'
+  name="$2" yaml_get "$(fleet_repo_config "$1")" '.focus[strenv(name)]'
 }
 
 # glob_re turns a path glob into an anchored regex: ** spans directories, * and ? stay inside one.
@@ -39,12 +50,13 @@ GLOB_RE='def glob_re: gsub("(?<c>[.+^${}()|\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*
   | gsub("\\*"; "[^/]*") | gsub("\\?"; "[^/]") | gsub("\u0001"; "(.*/)?") | gsub("\u0002"; ".*") | "^\(.)$";
   def ancestors: split("/") as $p | range(1; $p | length) | $p[:.] | join("/");'
 
-# fleet_reviewers prints adversarial, tests, then every reviewer whose .agents/fleet.yaml globs match the PR diff.
+# fleet_reviewers prints adversarial, tests, then every reviewer whose fleet_repo_config globs match the PR diff.
 # A glob matches a changed path or any of its parent directories. A new-dir:<glob> entry matches a directory
 # the PR creates: a parent directory of a changed path that matches the glob and is absent on the fetched base branch.
 fleet_reviewers() {
-  local cfg="$1/.agents/fleet.yaml" rules files pr base d added="" extra=""
-  if [ -f "$cfg" ]; then
+  local cfg rules files pr base d added="" extra=""
+  cfg="$(fleet_repo_config "$1")"
+  if [ -n "$cfg" ]; then
     rules="$(yq -o=json -I=0 '.reviewers // {}' "$cfg")" || return 1
     files="$(gh pr diff "$2" --name-only)" || return 1
     files="$(jq -Rsc 'split("\n") | map(select(. != ""))' <<<"$files")"
