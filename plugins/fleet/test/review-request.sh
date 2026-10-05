@@ -300,8 +300,10 @@ assert_eq "$(cat "$STUB_LOG")" ""
 OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/21 U0ALICE C0TEAM:1759312800.000100 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
 assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+21/spec.md"
 assert_eq "$(yq --front-matter=extract '.request_link' "$FLEET_HOME/reviews/o+web+21/spec.md")" C0TEAM:1759312800.000100
-# A reply's permalink carries its thread.
-OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 U0ALICE "$P/p1759312800000100?thread_ts=1759312700.000100&cid=C0TEAM" \
+add_bad U0ALICE https://acme.evil.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE https://acme.slack.com.evil.example/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+# A reply's permalink carries its thread, and an Enterprise Grid host has an .enterprise label.
+OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 U0ALICE "https://acme.enterprise.slack.com/archives/C0TEAM/p1759312800000100?thread_ts=1759312700.000100&cid=C0TEAM" \
   2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
 assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+20/spec.md"
 

@@ -15,7 +15,7 @@ source_repos() {
 # link_re matches the request link of message <ts> in <channel>: its Slack permalink, as a parent or as a reply, or
 # <channel>:<ts> when the workspace host is not configured.
 link_re() {
-  printf '^(https://[a-z0-9-]+\\.slack\\.com/archives/%s/p%s(\\?thread_ts=[0-9.]+(&cid=[A-Z0-9]+)?)?|%s:%s)$' "$1" "${2/./}" "$1" "${2/./\\.}"
+  printf '^(https://[a-z0-9-]+(\\.enterprise)?\\.slack\\.com/archives/%s/p%s(\\?thread_ts=[0-9.]+(&cid=[A-Z0-9]+)?)?|%s:%s)$' "$1" "${2/./}" "$1" "${2/./\\.}"
 }
 # ts_gt succeeds when Slack ts $1 is later than $2. Either may lack the fraction; callers bound both to 12.9 digits.
 ts_gt() {
