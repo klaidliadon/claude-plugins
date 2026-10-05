@@ -4,7 +4,7 @@ source "$(dirname "$0")/lib.sh"
 
 usage="usage: fleet-review-request run | cursor <source> [<ts>] | validate <source> <cursor> <dispatch_epoch> | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
 cursor="$FLEET_HOME/review-requests.cursor"
-pr_re='^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$'
+pr_re='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)$'
 ts_re='^[0-9]{1,12}\.[0-9]{1,9}$'
 need_channel_id() {
   [[ "$1" =~ ^[CGD][A-Z0-9]+$ ]] || { echo "fleet-review-request: source must be a Slack channel ID: $1" >&2; exit 2; }
@@ -12,10 +12,13 @@ need_channel_id() {
 source_repos() {
   src="$1" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")'
 }
-# link_re matches the request link of message <ts> in <channel>: its Slack permalink, as a parent or as a reply, or
-# <channel>:<ts> when the workspace host is not configured.
+# link_re matches the request link of message <ts> in <channel>: its Slack permalink or, when the workspace host is not
+# configured, <channel>:<ts>. Given <parent_ts>, a reply's permalink must name that thread and a parent's names none.
 link_re() {
-  printf '^(https://[a-z0-9-]+(\\.enterprise)?\\.slack\\.com/archives/%s/p%s(\\?thread_ts=[0-9.]+(&cid=[A-Z0-9]+)?)?|%s:%s)$' "$1" "${2/./}" "$1" "${2/./\\.}"
+  local q='(\?thread_ts=[0-9.]+(&cid=[A-Z0-9]+)?)?'
+  [ -z "${3:-}" ] || q=""
+  [ -z "${3:-}" ] || [ "$3" = "$2" ] || q="\\?thread_ts=${3/./\\.}(&cid=$1)?"
+  printf '^(https://[a-z0-9-]+(\\.enterprise)?\\.slack\\.com/archives/%s/p%s%s|%s:%s)$' "$1" "${2/./}" "$q" "$1" "${2/./\\.}"
 }
 # ts_gt succeeds when Slack ts $1 is later than $2. Either may lack the fraction; callers bound both to 12.9 digits.
 ts_gt() {
@@ -72,7 +75,8 @@ case "${1:-}" in
     ;;
   validate)
     # Reads the fleet-slack-check output on stdin. Every field is untrusted: one bad record rejects the whole batch.
-    # A line without a tab cannot be a record; it is prose or a code fence from the model, and is dropped unread.
+    # A line without a tab cannot be a record; it is prose or a code fence from the model, and is dropped unread,
+    # unless it starts like a record. Accepted records print oldest first, so add keeps the earliest request for a PR.
     [ $# -eq 4 ] || { echo "$usage" >&2; exit 2; }
     src="$2" old="$3" epoch="$4"
     need_channel_id "$src"
@@ -82,6 +86,7 @@ case "${1:-}" in
     reject() { echo "fleet-review-request: batch rejected, line $n: $*" >&2; exit 1; }
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
+      [[ ! "$line" =~ ^[[:space:]]*(req|cursor)([[:space:]:]|$) || "$line" == *$'\t'* ]] || reject "a record without tabs"
       [[ "$line" == *$'\t'* ]] || { dropped=$((dropped + 1)); continue; }
       [ -z "$last" ] || reject "a line follows the cursor line"
       tabs="${line//[!$'\t']/}"
@@ -94,9 +99,9 @@ case "${1:-}" in
           [[ " $repos " == *" ${BASH_REMATCH[1]}/${BASH_REMATCH[2]} "* ]] || reject "the PR's repo is not configured for $src"
           [[ "$by" =~ ^U[A-Z0-9]+$ ]] || reject "the requester is not a Slack user ID"
           [[ "$ts" =~ $ts_re && "$parent" =~ $ts_re ]] || reject "ts or parent_ts is not a Slack ts"
-          [[ "$link" =~ $(link_re "$src" "$ts") ]] || reject "the permalink is not a link to message $ts in $src"
-          ts_gt "$ts" "$old" && ! ts_gt "$ts" "$epoch" || reject "ts $ts is outside ($old, $epoch]"
           ! ts_gt "$parent" "$ts" || reject "parent_ts is after ts"
+          [[ "$link" =~ $(link_re "$src" "$ts" "$parent") ]] || reject "the permalink is not a link to message $ts in $src"
+          ts_gt "$ts" "$old" && ! ts_gt "$ts" "$epoch" || reject "ts $ts is outside ($old, $epoch]"
           accepted+="$line"$'\n'
           ;;
         cursor)
@@ -109,7 +114,8 @@ case "${1:-}" in
     done
     [ -n "$last" ] || { n=$((n + 1)); reject "no cursor line"; }
     [ "$dropped" -eq 0 ] || echo "fleet-review-request: dropped $dropped lines that are not records" >&2
-    printf '%scursor\t%s\n' "$accepted" "$epoch"
+    printf '%s' "$accepted" | LC_ALL=C sort -s -t $'\t' -k5,5n
+    printf 'cursor\t%s\n' "$epoch"
     ;;
   add)
     [ $# -eq 8 ] || { echo "$usage" >&2; exit 2; }

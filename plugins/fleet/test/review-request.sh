@@ -284,6 +284,8 @@ add_bad() {
 : >"$STUB_LOG"
 add_bad alice "$P/p1759312800000100" C0TEAM 1759312800.000100 "requested_by is not a Slack user ID: alice"
 add_bad 'U0ALICE;id' "$P/p1759312800000100" C0TEAM 1759312800.000100 "requested_by is not a Slack user ID"
+OUT="$("$RR" add C0TEAM "https://github.com/o/we'b/pull/20" U0ALICE "$P/p1759312800000100" 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 2; assert_contains "$OUT" "not a PR URL"
 add_bad U0ALICE "$P/p1759312800000100" '#team' 1759312800.000100 "request_channel is not a Slack channel ID: #team"
 add_bad U0ALICE "$P/p1759312800000100" C0TEAM 1759312800 "request_ts is not a Slack ts: 1759312800"
 add_bad U0ALICE "$P/p1759312800000100" C0TEAM '1759312800.000100$(id)' "request_ts is not a Slack ts"
@@ -330,6 +332,13 @@ assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$GOOD" "$CUR")"
 assert_eq "$(cat "$T/verr")" "fleet-review-request: dropped 5 lines that are not records"
 validate "$CUR"
 assert_eq "$(cat "$T/verr")" ""
+# Records come out oldest first whatever order the agent wrote them in, so add keeps the earliest request for a PR.
+LATER="$(row req https://github.com/o/app/pull/12 U0BOB "$P/p1759312990000100" 1759312990.000100 1759312990.000100)"
+validate "$LATER" "$EDGE" "$GOOD" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$GOOD" "$LATER" "$EDGE" "$CUR")"
+ENT="$(row req https://github.com/o/app/pull/15 U0ALICE https://acme.enterprise.slack.com/archives/C0TEAM/p1759312970000100 1759312970.000100 1759312970.000100)"
+validate "$ENT" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$ENT" "$CUR")"
 BARE="$(row req https://github.com/o/app/pull/14 U0ALICE C0TEAM:1759312960.000300 1759312960.000300 1759312960.000300)"
 validate "$BARE" "$CUR"
 assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$BARE" "$CUR")"
@@ -341,6 +350,9 @@ reject() {
   assert_eq "$RC" 1; assert_eq "$OUT" ""; assert_contains "$(cat "$T/verr")" "$why"
 }
 reject "not a PR URL" "$(row req https://github.com/o/app/issues/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+for url in "https://github.com/o p/app/pull/12" "https://github.com/o'p/app/pull/12" 'https://github.com/o/$app/pull/12'; do
+  reject "not a PR URL" "$(row req "$url" U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+done
 reject "not a PR URL" "$(row req https://github.com/o/app/pull/12/ U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
 reject "not configured for C0TEAM" "$(row req https://github.com/o/api/pull/1 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
 reject "not a Slack user ID" "$(row req https://github.com/o/app/pull/12 alice "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
@@ -349,6 +361,12 @@ reject "permalink is not a link to message" "$(row req https://github.com/o/app/
 for link in C0OTHER:1759312900.000100 C0TEAM:1759312900.000200 C0TEAM:1759312900x000100 "C0TEAM:1759312900.000100 "; do
   reject "permalink is not a link to message" "$(row req https://github.com/o/app/pull/12 U0ALICE "$link" 1759312900.000100 1759312900.000100)" "$CUR"
 done
+# A reply's permalink names its own thread in this channel, and a parent's names no thread.
+for link in "$P/p1759312950000200?thread_ts=1759312900.000100&cid=C0TEAM" "$P/p1759312950000200?thread_ts=1759300000.000100&cid=C0OTHER" \
+  "$P/p1759312950000200" https://acme.evil.slack.com/archives/C0TEAM/p1759312950000200?thread_ts=1759300000.000100; do
+  reject "permalink is not a link to message" "$(row req https://github.com/o/web/pull/3 U0BOB "$link" 1759312950.000200 1759300000.000100)" "$CUR"
+done
+reject "permalink is not a link to message" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100?thread_ts=1759312900.000100" 1759312900.000100 1759312900.000100)" "$CUR"
 reject "outside" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759313000000001" 1759313000.000001 1759313000.000001)" "$CUR"
 reject "outside" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312800000100" 1759312800.000100 1759312800.000100)" "$CUR"
 reject "outside" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312700000100" 1759312700.000100 1759312700.000100)" "$CUR"
@@ -358,6 +376,10 @@ reject "the cursor is not the dispatch epoch" "$GOOD" "$(row cursor 1759399999)"
 reject "the cursor is not the dispatch epoch" "$GOOD" "$(row cursor 1759313000.000000)"
 reject "no cursor line" "$GOOD"
 reject "no cursor line" "I'll read the Slack channel for review requests."
+# A record whose tabs became spaces is not prose: dropping it would lose the request and still move the cursor.
+reject "a record without tabs" "req https://github.com/o/app/pull/12 U0ALICE $P/p1759312900000100 1759312900.000100 1759312900.000100" "$CUR"
+reject "a record without tabs" "$GOOD" "cursor $EPOCH"
+reject "a record without tabs" "$GOOD" "cursor: $EPOCH"
 OUT="$("$RR" validate C0TEAM "$OLD" "$EPOCH" </dev/null 2>&1)"
 assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: batch rejected, line 1: no cursor line"
 reject "a line follows the cursor line" "$CUR" "$GOOD"
