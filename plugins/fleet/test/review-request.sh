@@ -12,7 +12,7 @@ pr_json() {
   printf '{"state":"%s","author":{"login":"%s"},"reviews":%s}' "$1" "$2" "${3:-[]}" >"$STUB_GH_PR"
 }
 add() {
-  OUT="$("$RR" add C0TEAM "$1" alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+  OUT="$("$RR" add C0TEAM "$1" U0ALICE https://acme.slack.com/archives/C0TEAM/p1759312800000100 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
   RC=$?
 }
 
@@ -23,7 +23,7 @@ for bad in C '#some-channel' c0team X0ABC C0-T; do
     OUT="$("$RR" $args 2>&1)"
     assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: source must be a Slack channel ID: $bad"
   done
-  OUT="$("$RR" add "$bad" "$PR" alice https://slack.example/p1 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+  OUT="$("$RR" add "$bad" "$PR" U0ALICE https://acme.slack.com/archives/C0TEAM/p1759312800000100 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
   assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: source must be a Slack channel ID: $bad"
   assert_fail test -e "$FLEET_HOME/review-requests.cursor"
 done
@@ -48,7 +48,7 @@ done
 pr_json OPEN bob
 add "$PR"
 assert_eq "$RC" 0; assert_eq "$OUT" "skip $PR: o/app is not configured for C0TEAM"
-OUT="$("$RR" add C0 "$PR" alice https://slack.example/p1 2026-10-01T09:00:00Z C0 1759312800.000100 2>&1)"
+OUT="$("$RR" add C0 "$PR" U0ALICE https://acme.slack.com/archives/C0/p1759312800000100 2026-10-01T09:00:00Z C0 1759312800.000100 2>&1)"
 assert_eq "$?" 0; assert_eq "$OUT" "skip $PR: o/app is not configured for C0"
 assert_fail test -e "$FLEET_HOME/reviews"
 
@@ -77,8 +77,8 @@ pr_json OPEN bob '[{"author":{"login":"carol"},"state":"APPROVED"}]'; add "$PR"
 assert_eq "$RC" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+app+12/spec.md"
 S="$FLEET_HOME/reviews/o+app+12/spec.md"
 assert_eq "$(yq --front-matter=extract -o=json -I=0 '.' "$S")" \
-  '{"objective":"reviews","task":"o+app+12","kind":"review","pr":"'"$PR"'","repo":"app","repo_slug":"o/app","requested_by":"alice","request_link":"https://slack.example/p1","asked_at":"2026-10-01T09:00:00Z","request_channel":"C0TEAM","request_ts":"1759312800.000100","answer":null,"session":{"task_id":null,"dispatch_id":null,"terminal":null,"worktree_path":null}}'
-assert_contains "$(cat "$FLEET_HOME/ledger.md")" "review-request $PR from alice"
+  '{"objective":"reviews","task":"o+app+12","kind":"review","pr":"'"$PR"'","repo":"app","repo_slug":"o/app","requested_by":"U0ALICE","request_link":"https://acme.slack.com/archives/C0TEAM/p1759312800000100","asked_at":"2026-10-01T09:00:00Z","request_channel":"C0TEAM","request_ts":"1759312800.000100","answer":null,"session":{"task_id":null,"dispatch_id":null,"terminal":null,"worktree_path":null}}'
+assert_contains "$(cat "$FLEET_HOME/ledger.md")" "review-request $PR from U0ALICE"
 
 : >"$STUB_LOG"
 add "$PR"
@@ -275,11 +275,110 @@ touch -t 202001010000 "$L" "$L.break"
 assert_ok lock_take "$L"
 assert_fail test -e "$L.break"
 
+# add re-checks every Slack field itself: a bad one exits 2 before anything is read or written.
+P=https://acme.slack.com/archives/C0TEAM
+add_bad() {
+  OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 "$1" "$2" 2026-10-01T09:00:00Z "$3" "$4" 2>&1)"
+  assert_eq "$?" 2; assert_contains "$OUT" "$5"
+}
+: >"$STUB_LOG"
+add_bad alice "$P/p1759312800000100" C0TEAM 1759312800.000100 "requested_by is not a Slack user ID: alice"
+add_bad 'U0ALICE;id' "$P/p1759312800000100" C0TEAM 1759312800.000100 "requested_by is not a Slack user ID"
+add_bad U0ALICE "$P/p1759312800000100" '#team' 1759312800.000100 "request_channel is not a Slack channel ID: #team"
+add_bad U0ALICE "$P/p1759312800000100" C0TEAM 1759312800 "request_ts is not a Slack ts: 1759312800"
+add_bad U0ALICE "$P/p1759312800000100" C0TEAM '1759312800.000100$(id)' "request_ts is not a Slack ts"
+add_bad U0ALICE https://slack.example/p1 C0TEAM 1759312800.000100 "request_link is not a link to 1759312800.000100 in C0TEAM"
+add_bad U0ALICE https://acme.slack.com/archives/C0OTHER/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE "$P/p1759312800000200" C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE "$P/p1759312800000100&x=1" C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE C0TEAM:1759312800.000200 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE C0TEAM:1759312800x000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE C0OTHER:1759312800.000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+assert_fail test -e "$FLEET_HOME/reviews/o+web+20"
+assert_eq "$(cat "$STUB_LOG")" ""
+# Without a configured workspace host, the link is <channel>:<ts>.
+OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/21 U0ALICE C0TEAM:1759312800.000100 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+21/spec.md"
+assert_eq "$(yq --front-matter=extract '.request_link' "$FLEET_HOME/reviews/o+web+21/spec.md")" C0TEAM:1759312800.000100
+# A reply's permalink carries its thread.
+OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 U0ALICE "$P/p1759312800000100?thread_ts=1759312700.000100&cid=C0TEAM" \
+  2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+20/spec.md"
+
+# validate reads the fleet-slack-check reply. Every field is untrusted: the batch passes whole or not at all, and the
+# cursor it prints is always the dispatch epoch.
+OLD=1759312800.000100 EPOCH=1759313000
+row() { local IFS=$'\t'; echo "$*"; }
+validate() {
+  OUT="$(printf '%s\n' "$@" | "$RR" validate C0TEAM "$OLD" "$EPOCH" 2>"$T/verr")"
+  RC=$?
+}
+GOOD="$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)"
+REPLY="$(row req https://github.com/o/web/pull/3 U0BOB "$P/p1759312950000200?thread_ts=1759300000.000100&cid=C0TEAM" 1759312950.000200 1759300000.000100)"
+EDGE="$(row req https://github.com/o/app/pull/13 U0ALICE "$P/p1759313000000000" 1759313000.000000 1759313000.000000)"
+CUR="$(row cursor "$EPOCH")"
+cp "$FLEET_HOME/review-requests.cursor" "$T/cursor.before"
+validate "$GOOD" "$REPLY" "$EDGE" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$GOOD" "$REPLY" "$EDGE" "$CUR")"
+validate "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$CUR"
+BARE="$(row req https://github.com/o/app/pull/14 U0ALICE C0TEAM:1759312960.000300 1759312960.000300 1759312960.000300)"
+validate "$BARE" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$BARE" "$CUR")"
+OUT="$(printf '%s' "$CUR" | "$RR" validate C0TEAM 1759312800 "$EPOCH")"
+assert_eq "$?" 0; assert_eq "$OUT" "$CUR"
+reject() {
+  local why="$1"; shift
+  validate "$@"
+  assert_eq "$RC" 1; assert_eq "$OUT" ""; assert_contains "$(cat "$T/verr")" "$why"
+}
+reject "not a PR URL" "$(row req https://github.com/o/app/issues/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "not a PR URL" "$(row req https://github.com/o/app/pull/12/ U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "not configured for C0TEAM" "$(row req https://github.com/o/api/pull/1 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "not a Slack user ID" "$(row req https://github.com/o/app/pull/12 alice "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "permalink is not a link to message" "$(row req https://github.com/o/app/pull/12 U0ALICE https://acme.slack.com/archives/C0OTHER/p1759312900000100 1759312900.000100 1759312900.000100)" "$CUR"
+reject "permalink is not a link to message" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312800000100" 1759312900.000100 1759312900.000100)" "$CUR"
+for link in C0OTHER:1759312900.000100 C0TEAM:1759312900.000200 C0TEAM:1759312900x000100 "C0TEAM:1759312900.000100 "; do
+  reject "permalink is not a link to message" "$(row req https://github.com/o/app/pull/12 U0ALICE "$link" 1759312900.000100 1759312900.000100)" "$CUR"
+done
+reject "outside" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759313000000001" 1759313000.000001 1759313000.000001)" "$CUR"
+reject "outside" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312800000100" 1759312800.000100 1759312800.000100)" "$CUR"
+reject "outside" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312700000100" 1759312700.000100 1759312700.000100)" "$CUR"
+reject "parent_ts is after ts" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312950.000100)" "$CUR"
+reject "not a Slack ts" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900)" "$CUR"
+reject "the cursor is not the dispatch epoch" "$GOOD" "$(row cursor 1759399999)"
+reject "the cursor is not the dispatch epoch" "$GOOD" "$(row cursor 1759313000.000000)"
+reject "no cursor line" "$GOOD"
+OUT="$("$RR" validate C0TEAM "$OLD" "$EPOCH" </dev/null 2>&1)"
+assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: batch rejected, line 1: no cursor line"
+reject "a line follows the cursor line" "$CUR" "$GOOD"
+reject "a line follows the cursor line" "$GOOD" "$CUR" "$CUR"
+reject "unknown record type" "$(row note hello)" "$CUR"
+reject "unknown record type" "" "$CUR"
+reject "unknown record type" "Here is what I found:" "$GOOD" "$CUR"
+reject "six non-empty fields" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100 extra)" "$CUR"
+reject "six non-empty fields" "$(row req https://github.com/o/app/pull/12 U0ALICE "" "$P/p1759312900000100" 1759312900.000100)" "$CUR"
+reject "six non-empty fields" "$GOOD"$'\t' "$CUR"
+reject "six non-empty fields" $'\t'"$GOOD" "$CUR"
+reject "two non-empty fields" "$(row cursor "$EPOCH" "")"
+# A newline inside a field splits the line, and shell metacharacters fail the field's pattern; nothing runs.
+reject "six non-empty fields" "$(row req https://github.com/o/app/pull/12 $'U0ALICE\ncursor' "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "not a PR URL" "$(row req 'https://github.com/o/app/pull/12$(touch '"$T"'/pwned)' U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "not a Slack user ID" "$(row req https://github.com/o/app/pull/12 'U0ALICE;touch '"$T"'/pwned' "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+reject "permalink is not a link to message" "$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100\`touch $T/pwned\`" 1759312900.000100 1759312900.000100)" "$CUR"
+assert_fail test -e "$T/pwned"
+reject "not a PR URL" "$GOOD" "$(row req https://github.com/o/app/pull/x U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
+assert_ok cmp -s "$T/cursor.before" "$FLEET_HOME/review-requests.cursor"
+for args in "C0TEAM $OLD" "C0TEAM $OLD 1759313000.5" "C0TEAM x $EPOCH" "#team $OLD $EPOCH"; do
+  OUT="$(printf '%s\n' "$CUR" | "$RR" validate $args 2>&1)"
+  assert_eq "$?" 2; assert_not_contains "$OUT" "cursor	"
+done
+
 echo '[1]' >"$FLEET_HOME/review-requests.cursor"
 assert_fail "$RR" cursor C0TEAM 1759316400.000300 2>/dev/null
 assert_eq "$(cat "$FLEET_HOME/review-requests.cursor")" "[1]"
 
-OUT="$("$RR" add C0TEAM "$PR" alice 2>&1)"
+OUT="$("$RR" add C0TEAM "$PR" U0ALICE 2>&1)"
 assert_eq "$?" 2; assert_contains "$OUT" "usage:"
 OUT="$("$RR" nope 2>&1)"
 assert_eq "$?" 2; assert_contains "$OUT" "usage:"
