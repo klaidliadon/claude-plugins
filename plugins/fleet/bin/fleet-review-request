@@ -71,16 +71,18 @@ case "${1:-}" in
     src="$src" ts="${3:?$usage}" yq -i '.[strenv(src)] = strenv(ts)' "$cursor"
     ;;
   validate)
-    # Reads the fleet-slack-check output on stdin. Every field is untrusted: one bad line rejects the whole batch.
+    # Reads the fleet-slack-check output on stdin. Every field is untrusted: one bad record rejects the whole batch.
+    # A line without a tab cannot be a record; it is prose or a code fence from the model, and is dropped unread.
     [ $# -eq 4 ] || { echo "$usage" >&2; exit 2; }
     src="$2" old="$3" epoch="$4"
     need_channel_id "$src"
     [[ "$old" =~ ^[0-9]{1,12}(\.[0-9]{1,9})?$ && "$epoch" =~ ^[0-9]{1,12}$ ]] || { echo "$usage" >&2; exit 2; }
     repos="$(source_repos "$src")"
-    n=0 accepted="" last=""
+    n=0 dropped=0 accepted="" last=""
     reject() { echo "fleet-review-request: batch rejected, line $n: $*" >&2; exit 1; }
     while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
+      [[ "$line" == *$'\t'* ]] || { dropped=$((dropped + 1)); continue; }
       [ -z "$last" ] || reject "a line follows the cursor line"
       tabs="${line//[!$'\t']/}"
       IFS=$'\t' read -r -a f <<<"$line"
@@ -106,6 +108,7 @@ case "${1:-}" in
       esac
     done
     [ -n "$last" ] || { n=$((n + 1)); reject "no cursor line"; }
+    [ "$dropped" -eq 0 ] || echo "fleet-review-request: dropped $dropped lines that are not records" >&2
     printf '%scursor\t%s\n' "$accepted" "$epoch"
     ;;
   add)
