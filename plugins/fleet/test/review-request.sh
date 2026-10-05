@@ -45,6 +45,7 @@ for ok in C0 G0 D0; do
   assert_eq "$("$RR" cursor "$ok")" "1759312800.000300"
 done
 
+printf 'review_requests:\n  slack_workspace: acme\n' >"$FLEET_HOME/config.yaml"
 pr_json OPEN bob
 add "$PR"
 assert_eq "$RC" 0; assert_eq "$OUT" "skip $PR: o/app is not configured for C0TEAM"
@@ -59,6 +60,8 @@ review_requests:
       repos: [o/app, o/web]
     - slack: C0OTHER
       repos: [o/api]
+  slack_workspace: acme
+  slack_user_id: U0ME
   skip: {authors: [me, dependabot], already_reviewer: true}
 YAML
 add https://github.com/o/api/pull/1
@@ -298,16 +301,53 @@ add_bad U0ALICE C0TEAM:1759312800x000100 C0TEAM 1759312800.000100 "request_link 
 add_bad U0ALICE C0OTHER:1759312800.000100 C0TEAM 1759312800.000100 "request_link is not a link to"
 assert_fail test -e "$FLEET_HOME/reviews/o+web+20"
 assert_eq "$(cat "$STUB_LOG")" ""
-# Without a configured workspace host, the link is <channel>:<ts>.
+# The link's form follows slack_workspace, never the caller: a permalink on that exact host when it is set, and
+# <channel>:<ts> only when it is not.
+add_bad U0ALICE C0TEAM:1759312800.000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE https://other.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE https://acme.enterprise.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE https://acme.evil.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+add_bad U0ALICE https://acme.slack.com.evil.example/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
+assert_fail test -e "$FLEET_HOME/reviews/o+web+20"
+# A reply's permalink carries its thread.
+OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 U0ALICE "$P/p1759312800000100?thread_ts=1759312700.000100&cid=C0TEAM" \
+  2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+20/spec.md"
+# A request by the user's own Slack ID is skipped, whatever the agent reported.
+OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/23 U0ME "$P/p1759312800000100" 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "skip https://github.com/o/web/pull/23: requested by the user"
+assert_fail test -e "$FLEET_HOME/reviews/o+web+23"
+# An Enterprise Grid workspace has an .enterprise label, and the plain host no longer passes.
+yq -i '.review_requests.slack_workspace = "acme.enterprise"' "$FLEET_HOME/config.yaml"
+add_bad U0ALICE "$P/p1759312800000100" C0TEAM 1759312800.000100 "request_link is not a link to"
+OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/22 U0ALICE https://acme.enterprise.slack.com/archives/C0TEAM/p1759312800000100 \
+  2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+22/spec.md"
+# Without a workspace, the link is <channel>:<ts> and no permalink passes.
+yq -i 'del(.review_requests.slack_workspace)' "$FLEET_HOME/config.yaml"
+add_bad U0ALICE "$P/p1759312800000100" C0TEAM 1759312800.000100 "request_link is not a link to"
 OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/21 U0ALICE C0TEAM:1759312800.000100 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
 assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+21/spec.md"
 assert_eq "$(yq --front-matter=extract '.request_link' "$FLEET_HOME/reviews/o+web+21/spec.md")" C0TEAM:1759312800.000100
-add_bad U0ALICE https://acme.evil.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
-add_bad U0ALICE https://acme.slack.com.evil.example/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
-# A reply's permalink carries its thread, and an Enterprise Grid host has an .enterprise label.
-OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 U0ALICE "https://acme.enterprise.slack.com/archives/C0TEAM/p1759312800000100?thread_ts=1759312700.000100&cid=C0TEAM" \
-  2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
-assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+20/spec.md"
+# A slack_workspace that is not a bare host fails before anything is read or written.
+yq -i '.review_requests.slack_workspace = "acme.slack.com"' "$FLEET_HOME/config.yaml"
+add_bad U0ALICE https://acme.slack.com.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 \
+  "slack_workspace must be a host without .slack.com: acme.slack.com"
+OUT="$(printf 'cursor\t1759313000\n' | "$RR" validate C0TEAM 1759312800 1759313000 2>&1)"
+assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: slack_workspace must be a host without .slack.com: acme.slack.com"
+yq -i '.review_requests.slack_workspace = "acme"' "$FLEET_HOME/config.yaml"
+
+# linked reads one message's text and succeeds only when it holds the whole PR URL: pull/123 is not pull/12.
+linked() { printf '%s' "$2" | "$RR" linked "$1"; }
+assert_ok linked https://github.com/o/app/pull/12 'review <https://github.com/o/app/pull/12|github.com/o/app/pull/12> please'
+assert_ok linked https://github.com/o/app/pull/12 'see <https:\/\/github.com\/O\/App\/pull\/12>'
+assert_ok linked https://github.com/o/app/pull/12 $'first https://github.com/o/app/pull/123\nthen https://github.com/o/app/pull/12/files'
+assert_fail linked https://github.com/o/app/pull/12 'review <https://github.com/o/app/pull/123|github.com/o/app/pull/123>'
+assert_fail linked https://github.com/o/app/pull/12 'review https://github.com/o/app2/pull/12 or https://github.com/xo/app/pull/12'
+assert_fail linked https://github.com/o/app/pull/12 'review o/app pull 12, please'
+assert_fail linked https://github.com/o/app/pull/12 ''
+OUT="$(printf x | "$RR" linked 'https://github.com/o/app/pull/12$(id)' 2>&1)"
+assert_eq "$?" 2; assert_contains "$OUT" "usage:"
 
 # validate reads the fleet-slack-check reply. Every field is untrusted: the batch passes whole or not at all, and the
 # cursor it prints is always the dispatch epoch.
@@ -316,6 +356,11 @@ row() { local IFS=$'\t'; echo "$*"; }
 validate() {
   OUT="$(printf '%s\n' "$@" | "$RR" validate C0TEAM "$OLD" "$EPOCH" 2>"$T/verr")"
   RC=$?
+}
+reject() {
+  local why="$1"; shift
+  validate "$@"
+  assert_eq "$RC" 1; assert_eq "$OUT" ""; assert_contains "$(cat "$T/verr")" "$why"
 }
 GOOD="$(row req https://github.com/o/app/pull/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)"
 REPLY="$(row req https://github.com/o/web/pull/3 U0BOB "$P/p1759312950000200?thread_ts=1759300000.000100&cid=C0TEAM" 1759312950.000200 1759300000.000100)"
@@ -336,19 +381,38 @@ assert_eq "$(cat "$T/verr")" ""
 LATER="$(row req https://github.com/o/app/pull/12 U0BOB "$P/p1759312990000100" 1759312990.000100 1759312990.000100)"
 validate "$LATER" "$EDGE" "$GOOD" "$CUR"
 assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$GOOD" "$LATER" "$EDGE" "$CUR")"
+# Within one second, and for two PRs in one message (equal ts), the order is by ts and then as written.
+SAME1="$(row req https://github.com/o/app/pull/16 U0ALICE "$P/p1759312980000100" 1759312980.000100 1759312980.000100)"
+SAME2="$(row req https://github.com/o/app/pull/17 U0ALICE "$P/p1759312980000200" 1759312980.000200 1759312980.000200)"
+TWIN="$(row req https://github.com/o/web/pull/17 U0ALICE "$P/p1759312980000200" 1759312980.000200 1759312980.000200)"
+validate "$SAME2" "$TWIN" "$SAME1" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$SAME1" "$SAME2" "$TWIN" "$CUR")"
+validate "$TWIN" "$SAME2" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$TWIN" "$SAME2" "$CUR")"
+# The link form follows slack_workspace: another host, the wrong mode, or a stray .enterprise label rejects the batch.
 ENT="$(row req https://github.com/o/app/pull/15 U0ALICE https://acme.enterprise.slack.com/archives/C0TEAM/p1759312970000100 1759312970.000100 1759312970.000100)"
+BARE="$(row req https://github.com/o/app/pull/14 U0ALICE C0TEAM:1759312960.000300 1759312960.000300 1759312960.000300)"
+OTHER="$(row req https://github.com/o/app/pull/14 U0ALICE https://other.slack.com/archives/C0TEAM/p1759312960000300 1759312960.000300 1759312960.000300)"
+for line in "$ENT" "$BARE" "$OTHER"; do
+  reject "permalink is not a link to message" "$line" "$CUR"
+done
+yq -i '.review_requests.slack_workspace = "acme.enterprise"' "$FLEET_HOME/config.yaml"
 validate "$ENT" "$CUR"
 assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$ENT" "$CUR")"
-BARE="$(row req https://github.com/o/app/pull/14 U0ALICE C0TEAM:1759312960.000300 1759312960.000300 1759312960.000300)"
+reject "permalink is not a link to message" "$GOOD" "$CUR"
+yq -i 'del(.review_requests.slack_workspace)' "$FLEET_HOME/config.yaml"
 validate "$BARE" "$CUR"
 assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$BARE" "$CUR")"
+reject "permalink is not a link to message" "$GOOD" "$CUR"
+yq -i '.review_requests.slack_workspace = "acme"' "$FLEET_HOME/config.yaml"
+# A source with no configured repos: an empty batch still passes, and any req is not configured.
+OUT="$(printf '%s\n' "$CUR" | "$RR" validate C0NONE "$OLD" "$EPOCH")"
+assert_eq "$?" 0; assert_eq "$OUT" "$CUR"
+OUT="$(printf '%s\n' "$(row req https://github.com/o/app/pull/12 U0ALICE https://acme.slack.com/archives/C0NONE/p1759312900000100 1759312900.000100 1759312900.000100)" "$CUR" |
+  "$RR" validate C0NONE "$OLD" "$EPOCH" 2>&1)"
+assert_eq "$?" 1; assert_eq "$OUT" "fleet-review-request: batch rejected, line 1: the PR's repo is not configured for C0NONE"
 OUT="$(printf '%s' "$CUR" | "$RR" validate C0TEAM 1759312800 "$EPOCH")"
 assert_eq "$?" 0; assert_eq "$OUT" "$CUR"
-reject() {
-  local why="$1"; shift
-  validate "$@"
-  assert_eq "$RC" 1; assert_eq "$OUT" ""; assert_contains "$(cat "$T/verr")" "$why"
-}
 reject "not a PR URL" "$(row req https://github.com/o/app/issues/12 U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"
 for url in "https://github.com/o p/app/pull/12" "https://github.com/o'p/app/pull/12" 'https://github.com/o/$app/pull/12'; do
   reject "not a PR URL" "$(row req "$url" U0ALICE "$P/p1759312900000100" 1759312900.000100 1759312900.000100)" "$CUR"

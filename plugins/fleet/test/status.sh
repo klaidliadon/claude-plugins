@@ -216,7 +216,7 @@ yq --front-matter=process -i '.cleaned_at = "2026-10-02T00:00:00Z"' "$TD/spec.md
 assert_not_contains "$("$DIR/bin/fleet-status" --tsv)" "1-api"
 
 export STUB_ORCA_CHECK="$T/check-empty.json"
-printf 'review_requests:\n  sources:\n    - slack: C0TEAM\n      repos: [o/app]\n' >"$FLEET_HOME/config.yaml"
+printf 'review_requests:\n  sources:\n    - slack: C0TEAM\n      repos: [o/app]\n  slack_workspace: acme\n' >"$FLEET_HOME/config.yaml"
 "$DIR/bin/fleet-review-request" add C0TEAM https://github.com/o/app/pull/7 U0ALICE https://acme.slack.com/archives/C0TEAM/p1759312800000100 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 >/dev/null
 RS="$FLEET_HOME/reviews/o+app+7/spec.md"
 review_next() { "$DIR/bin/fleet-status" --tsv | grep $'^reviews\to+app+7\t' | cut -f1-4; }

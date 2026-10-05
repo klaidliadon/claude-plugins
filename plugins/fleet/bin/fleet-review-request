@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-usage="usage: fleet-review-request run | cursor <source> [<ts>] | validate <source> <cursor> <dispatch_epoch> | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
+usage="usage: fleet-review-request run | cursor <source> [<ts>] | validate <source> <cursor> <dispatch_epoch> | linked <pr-url> | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
 cursor="$FLEET_HOME/review-requests.cursor"
 pr_re='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)$'
 ts_re='^[0-9]{1,12}\.[0-9]{1,9}$'
@@ -12,13 +12,22 @@ need_channel_id() {
 source_repos() {
   src="$1" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")'
 }
-# link_re matches the request link of message <ts> in <channel>: its Slack permalink or, when the workspace host is not
-# configured, <channel>:<ts>. Given <parent_ts>, a reply's permalink must name that thread and a parent's names none.
+# slack_ws prints review_requests.slack_workspace, the permalink host without .slack.com, or nothing.
+slack_ws() {
+  local ws
+  ws="$(fleet_config '.review_requests.slack_workspace')"
+  [[ -z "$ws" || "$ws" =~ ^[a-z0-9-]+(\.enterprise)?$ ]] ||
+    { echo "fleet-review-request: slack_workspace must be a host without .slack.com: $ws" >&2; exit 2; }
+  printf '%s' "$ws"
+}
+# link_re <ws> <channel> <ts> [<parent_ts>] matches the request link of message <ts>: its permalink on workspace <ws>,
+# or <channel>:<ts> when <ws> is empty. Given <parent_ts>, a reply's permalink must name that thread and a parent's none.
 link_re() {
   local q='(\?thread_ts=[0-9.]+(&cid=[A-Z0-9]+)?)?'
-  [ -z "${3:-}" ] || q=""
-  [ -z "${3:-}" ] || [ "$3" = "$2" ] || q="\\?thread_ts=${3/./\\.}(&cid=$1)?"
-  printf '^(https://[a-z0-9-]+(\\.enterprise)?\\.slack\\.com/archives/%s/p%s%s|%s:%s)$' "$1" "${2/./}" "$q" "$1" "${2/./\\.}"
+  [ -n "$1" ] || { printf '^%s:%s$' "$2" "${3/./\\.}"; return; }
+  [ -z "${4:-}" ] || q=""
+  [ -z "${4:-}" ] || [ "$4" = "$3" ] || q="\\?thread_ts=${4/./\\.}(&cid=$2)?"
+  printf '^https://%s\\.slack\\.com/archives/%s/p%s%s$' "${1/./\\.}" "$2" "${3/./}" "$q"
 }
 # ts_gt succeeds when Slack ts $1 is later than $2. Either may lack the fraction; callers bound both to 12.9 digits.
 ts_gt() {
@@ -81,7 +90,7 @@ case "${1:-}" in
     src="$2" old="$3" epoch="$4"
     need_channel_id "$src"
     [[ "$old" =~ ^[0-9]{1,12}(\.[0-9]{1,9})?$ && "$epoch" =~ ^[0-9]{1,12}$ ]] || { echo "$usage" >&2; exit 2; }
-    repos="$(source_repos "$src")"
+    repos="$(source_repos "$src")" ws="$(slack_ws)"
     n=0 dropped=0 accepted="" last=""
     reject() { echo "fleet-review-request: batch rejected, line $n: $*" >&2; exit 1; }
     while IFS= read -r line || [ -n "$line" ]; do
@@ -100,7 +109,7 @@ case "${1:-}" in
           [[ "$by" =~ ^U[A-Z0-9]+$ ]] || reject "the requester is not a Slack user ID"
           [[ "$ts" =~ $ts_re && "$parent" =~ $ts_re ]] || reject "ts or parent_ts is not a Slack ts"
           ! ts_gt "$parent" "$ts" || reject "parent_ts is after ts"
-          [[ "$link" =~ $(link_re "$src" "$ts" "$parent") ]] || reject "the permalink is not a link to message $ts in $src"
+          [[ "$link" =~ $(link_re "$ws" "$src" "$ts" "$parent") ]] || reject "the permalink is not a link to message $ts in $src"
           ts_gt "$ts" "$old" && ! ts_gt "$ts" "$epoch" || reject "ts $ts is outside ($old, $epoch]"
           accepted+="$line"$'\n'
           ;;
@@ -117,6 +126,14 @@ case "${1:-}" in
     printf '%s' "$accepted" | LC_ALL=C sort -s -t $'\t' -k5,5n
     printf 'cursor\t%s\n' "$epoch"
     ;;
+  linked)
+    # Reads one Slack message's text on stdin and succeeds when it holds <pr-url> as a whole GitHub PR URL, so pull/123
+    # never passes for pull/12. Owner and repo compare case-insensitively, as GitHub resolves them.
+    [ $# -eq 2 ] && [[ "$2" =~ $pr_re ]] || { echo "$usage" >&2; exit 2; }
+    want="$(tr '[:upper:]' '[:lower:]' <<<"$2")"
+    found="$(tr -d '\\' | grep -oiE 'https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+' | tr '[:upper:]' '[:lower:]')" || true
+    grep -qxF "$want" <<<"$found"
+    ;;
   add)
     [ $# -eq 8 ] || { echo "$usage" >&2; exit 2; }
     src="$2" url="$3" by="$4" link="$5" ch="$7" ts="$8"
@@ -127,11 +144,13 @@ case "${1:-}" in
     [[ "$by" =~ ^U[A-Z0-9]+$ ]] || bad "requested_by is not a Slack user ID: $by"
     [[ "$ch" =~ ^[CGD][A-Z0-9]+$ ]] || bad "request_channel is not a Slack channel ID: $ch"
     [[ "$ts" =~ $ts_re ]] || bad "request_ts is not a Slack ts: $ts"
-    [[ "$link" =~ $(link_re "$ch" "$ts") ]] || bad "request_link is not a link to $ts in $ch: $link"
+    ws="$(slack_ws)"
+    [[ "$link" =~ $(link_re "$ws" "$ch" "$ts") ]] || bad "request_link is not a link to $ts in $ch: $link"
     # GitHub owner and repo names cannot contain "+", so the key is unambiguous.
     task="$(tr '[:upper:]' '[:lower:]' <<<"${slug/\//+}+$n")"
     dir="$FLEET_HOME/reviews/$task" lock="$FLEET_HOME/reviews/.lock-$task"
     skip() { echo "skip $url: $*"; exit 0; }
+    [ "$by" != "$(fleet_config '.review_requests.slack_user_id')" ] || skip "requested by the user"
     repos="$(source_repos "$src")"
     [[ " $repos " == *" $slug "* ]] || skip "$slug is not configured for $src"
     mkdir -p "$FLEET_HOME/reviews"

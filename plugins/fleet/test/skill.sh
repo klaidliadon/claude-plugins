@@ -108,13 +108,16 @@ assert_contains "$read_step" 'run the agent with `channel` = the source'
 assert_contains "$read_step" '`fleet-slack-check`'
 assert_contains "$read_step" 'thread_lookback_days'
 assert_contains "$read_step" 'slack_user_id'
-assert_contains "$read_step" 'mkdir -p "$FLEET_HOME/slack-check" && rm -f "$FLEET_HOME/slack-check/<source>-"*.out`, then write the reply verbatim with the Write tool to the new file `$FLEET_HOME/slack-check/<source>-<dispatch epoch>.out`, never through a shell command'
+assert_contains "$read_step" 'mkdir -p "$FLEET_HOME/slack-check" && rm -f "$FLEET_HOME/slack-check/<source>-"*`, then write the reply verbatim with the Write tool to the new file `$FLEET_HOME/slack-check/<source>-<dispatch epoch>.out`, never through a shell command'
 assert_contains "$read_step" '<plugin>/bin/fleet-review-request validate "<source>" <cursor ts> <dispatch epoch> < "$FLEET_HOME/slack-check/<source>-<dispatch epoch>.out"'
 assert_contains "$read_step" 'leave the cursor unchanged, tell the user once (`slack check failed for <source>: <reason>`)'
 hits="$(grep -nE 'slack_read_channel|slack_search|search' <<<"$read_step")" && fail "step 2 of Review requests reads Slack itself: $hits"
 add_step="$(sed -n '/^3\./,/^4\./p' <<<"$requests" | sed '$d')"
 assert_contains "$add_step" 'Group the lines by `parent_ts` and read each thread once: `slack_read_thread` with `channel_id` = the source and `message_ts` = `parent_ts`'
-assert_contains "$add_step" "its author's user ID is \`requester\`, and its text contains \`pr_url\`"
+assert_contains "$add_step" "its author's user ID is \`requester\`, and its text asks for a review of that PR, which you judge from the message you just read, never from the agent's reply"
+assert_contains "$add_step" "<plugin>/bin/fleet-review-request linked '<pr_url>' < \"\$FLEET_HOME/slack-check/<source>-<dispatch epoch>-<ts>.txt\""
+assert_contains "$add_step" 'skips a request by `slack_user_id`'
+hits="$(grep -n 'contains `pr_url`' <<<"$add_step")" && fail "step 3 matches the PR URL as a substring: $hits"
 assert_contains "$add_step" "add '<source>' '<pr_url>' '<requester>' '<permalink>' '<asked_at>' '<source>' '<ts>'"
 cursor_step="$(sed -n '/^4\./,/^5\./p' <<<"$requests" | sed '$d')"
 assert_contains "$cursor_step" 'fleet-review-request cursor "<source>" <dispatch epoch>'
