@@ -2,10 +2,42 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-usage="usage: fleet-review-request run | cursor <source> [<ts>] | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
+usage="usage: fleet-review-request run | cursor <source> [<ts>] | validate <source> <cursor> <dispatch_epoch> | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
 cursor="$FLEET_HOME/review-requests.cursor"
+pr_re='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)$'
+ts_re='^[0-9]{1,12}\.[0-9]{1,9}$'
 need_channel_id() {
   [[ "$1" =~ ^[CGD][A-Z0-9]+$ ]] || { echo "fleet-review-request: source must be a Slack channel ID: $1" >&2; exit 2; }
+}
+# source_repos prints the source's repos, lowercased: GitHub resolves owner and repo case-insensitively.
+source_repos() {
+  src="$1" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[] | downcase] | join(" ")'
+}
+# slack_ws prints review_requests.slack_workspace, the permalink host without .slack.com, or nothing.
+slack_ws() {
+  local ws
+  ws="$(fleet_config '.review_requests.slack_workspace')"
+  [[ -z "$ws" || "$ws" =~ ^[a-z0-9-]+(\.enterprise)?$ ]] ||
+    { echo "fleet-review-request: slack_workspace must be a host without .slack.com: $ws" >&2; exit 2; }
+  printf '%s' "$ws"
+}
+# link_re <ws> <channel> <parent_ts> [<ts>] matches a request link: a permalink on workspace <ws>, or
+# <channel>:<parent_ts> when <ws> is empty. Given <ts>, the permalink is message <ts> exactly, naming thread <parent_ts>
+# when it is a reply; without it, the permalink is the parent or any reply in its thread.
+link_re() {
+  local q="\\?thread_ts=${3/./\\.}(&cid=$2)?" p
+  [ -n "$1" ] || { printf '^%s:%s$' "$2" "${3/./\\.}"; return; }
+  p="(p${3/./}|p[0-9]{1,21}$q)"
+  [ -z "${4:-}" ] || p="p${4/./}$q"
+  [ "${4:-}" != "$3" ] || p="p${3/./}"
+  printf '^https://%s\\.slack\\.com/archives/%s/%s$' "${1/./\\.}" "$2" "$p"
+}
+# ts_gt succeeds when Slack ts $1 is later than $2. Either may lack the fraction; callers bound both to 12.9 digits.
+ts_gt() {
+  local a="$1." b="$2."
+  a="${a#*.}" b="${b#*.}"
+  a="${a%.}000000000" b="${b%.}000000000"
+  ((10#${1%%.*} > 10#${2%%.*} || (10#${1%%.*} == 10#${2%%.*} && 10#${a:0:9} > 10#${b:0:9})))
 }
 
 case "${1:-}" in
@@ -53,18 +85,70 @@ case "${1:-}" in
     [ -s "$cursor" ] || echo '{}' >"$cursor"
     src="$src" ts="${3:?$usage}" yq -i '.[strenv(src)] = strenv(ts)' "$cursor"
     ;;
+  validate)
+    # Reads the fleet-slack-check output on stdin. Every field is untrusted: one bad record rejects the whole batch.
+    # A line without a tab cannot be a record; it is prose or a code fence from the model, and is dropped unread,
+    # unless it starts like a record. Accepted records print oldest first, so add keeps the earliest request for a PR.
+    [ $# -eq 4 ] || { echo "$usage" >&2; exit 2; }
+    src="$2" old="$3" epoch="$4"
+    need_channel_id "$src"
+    [[ "$old" =~ ^[0-9]{1,12}(\.[0-9]{1,9})?$ && "$epoch" =~ ^[0-9]{1,12}$ ]] || { echo "$usage" >&2; exit 2; }
+    repos="$(source_repos "$src")" ws="$(slack_ws)"
+    n=0 dropped=0 accepted="" last=""
+    reject() { echo "fleet-review-request: batch rejected, line $n: $*" >&2; exit 1; }
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      [[ ! "$line" =~ ^[[:space:]]*(req|cursor)([[:space:]:]|$) || "$line" == *$'\t'* ]] || reject "a record without tabs"
+      [[ "$line" == *$'\t'* ]] || { dropped=$((dropped + 1)); continue; }
+      [ -z "$last" ] || reject "a line follows the cursor line"
+      tabs="${line//[!$'\t']/}"
+      IFS=$'\t' read -r -a f <<<"$line"
+      case "${f[0]:-}" in
+        req)
+          [ "${#tabs}" -eq 5 ] && [ "${#f[@]}" -eq 6 ] || reject "a req line has six non-empty fields"
+          url="${f[1]}" by="${f[2]}" link="${f[3]}" ts="${f[4]}" parent="${f[5]}"
+          [[ "$url" =~ $pr_re ]] || reject "not a PR URL"
+          slug="$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}/${BASH_REMATCH[2]}")"
+          [[ " $repos " == *" $slug "* ]] || reject "the PR's repo is not configured for $src"
+          [[ "$by" =~ ^U[A-Z0-9]+$ ]] || reject "the requester is not a Slack user ID"
+          [[ "$ts" =~ $ts_re && "$parent" =~ $ts_re ]] || reject "ts or parent_ts is not a Slack ts"
+          ! ts_gt "$parent" "$ts" || reject "parent_ts is after ts"
+          [[ "$link" =~ $(link_re "$ws" "$src" "$parent" "$ts") ]] || reject "the permalink is not a link to message $ts in $src"
+          ts_gt "$ts" "$old" && ! ts_gt "$ts" "$epoch" || reject "ts $ts is outside ($old, $epoch]"
+          accepted+="$line"$'\n'
+          ;;
+        cursor)
+          [ "${#tabs}" -eq 1 ] && [ "${#f[@]}" -eq 2 ] || reject "a cursor line has two non-empty fields"
+          [ "${f[1]}" = "$epoch" ] || reject "the cursor is not the dispatch epoch $epoch"
+          last=1
+          ;;
+        *) reject "unknown record type" ;;
+      esac
+    done
+    [ -n "$last" ] || { n=$((n + 1)); reject "no cursor line"; }
+    [ "$dropped" -eq 0 ] || echo "fleet-review-request: dropped $dropped lines that are not records" >&2
+    printf '%s' "$accepted" | LC_ALL=C sort -s -t $'\t' -k5,5n
+    printf 'cursor\t%s\n' "$epoch"
+    ;;
   add)
     [ $# -eq 8 ] || { echo "$usage" >&2; exit 2; }
-    src="$2" url="$3"
+    src="$2" url="$3" by="$4" link="$5" ch="$7" ts="$8"
+    bad() { echo "fleet-review-request: $*" >&2; exit 2; }
     need_channel_id "$src"
-    [[ "$url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+)$ ]] || { echo "fleet-review-request: not a PR URL: $url" >&2; exit 2; }
+    [[ "$url" =~ $pr_re ]] || bad "not a PR URL: $url"
     slug="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}" repo="${BASH_REMATCH[2]}" n="${BASH_REMATCH[3]}"
+    [[ "$by" =~ ^U[A-Z0-9]+$ ]] || bad "requested_by is not a Slack user ID: $by"
+    [[ "$ch" =~ ^[CGD][A-Z0-9]+$ ]] || bad "request_channel is not a Slack channel ID: $ch"
+    [[ "$ts" =~ $ts_re ]] || bad "request_ts is not a Slack ts: $ts"
+    ws="$(slack_ws)"
+    [[ "$link" =~ $(link_re "$ws" "$ch" "$ts") ]] || bad "request_link is not a link to thread $ts in $ch: $link"
     # GitHub owner and repo names cannot contain "+", so the key is unambiguous.
     task="$(tr '[:upper:]' '[:lower:]' <<<"${slug/\//+}+$n")"
     dir="$FLEET_HOME/reviews/$task" lock="$FLEET_HOME/reviews/.lock-$task"
     skip() { echo "skip $url: $*"; exit 0; }
-    repos="$(src="$src" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")')"
-    [[ " $repos " == *" $slug "* ]] || skip "$slug is not configured for $src"
+    [ "$by" != "$(fleet_config '.review_requests.slack_user_id')" ] || skip "requested by the user"
+    repos="$(source_repos "$src")"
+    [[ " $repos " == *" $(tr '[:upper:]' '[:lower:]' <<<"$slug") "* ]] || skip "$slug is not configured for $src"
     mkdir -p "$FLEET_HOME/reviews"
     lock_take "$lock" || { echo "fleet-review-request: $lock is held; it goes stale after ${FLEET_LOCK_TTL:-300}s" >&2; exit 1; }
     tmp=""
@@ -80,7 +164,7 @@ case "${1:-}" in
     fi
     mkdir -p "$dir"
     tmp="$(mktemp "$dir/.spec.XXXXXX")"
-    url="$url" repo="$repo" slug="$slug" task="$task" by="$4" link="$5" at="$6" ch="$7" ts="$8" yq -n '
+    url="$url" repo="$repo" slug="$slug" task="$task" by="$by" link="$link" at="$6" ch="$ch" ts="$ts" yq -n '
       .objective = "reviews" | .task = strenv(task) | .kind = "review" | .pr = strenv(url)
       | .repo = strenv(repo) | .repo_slug = strenv(slug)
       | .requested_by = strenv(by) | .request_link = strenv(link) | .asked_at = strenv(at)
@@ -88,7 +172,7 @@ case "${1:-}" in
       | .session = {"task_id": null, "dispatch_id": null, "terminal": null, "worktree_path": null}' |
       { echo ---; cat; echo ---; } >"$tmp"
     mv "$tmp" "$dir/spec.md"
-    ledger_append "review-request $url from $4"
+    ledger_append "review-request $url from $by"
     echo "created $dir/spec.md"
     ;;
   *) echo "$usage" >&2; exit 2 ;;
