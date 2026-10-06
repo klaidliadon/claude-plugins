@@ -345,6 +345,11 @@ assert_ok linked https://github.com/o/app/pull/12 $'first https://github.com/o/a
 assert_fail linked https://github.com/o/app/pull/12 'review <https://github.com/o/app/pull/123|github.com/o/app/pull/123>'
 assert_fail linked https://github.com/o/app/pull/12 'review https://github.com/o/app2/pull/12 or https://github.com/xo/app/pull/12'
 assert_fail linked https://github.com/o/app/pull/12 'review o/app pull 12, please'
+assert_fail linked https://github.com/o/app/pull/12 'review https://github.com/o/app/pull/12abc'
+assert_fail linked https://github.com/o/app/pull/12 'see https://x.example/?u=https://github.com/o/app/pull/12'
+assert_ok linked https://github.com/o/app/pull/12 'review (https://github.com/o/app/pull/12), thanks'
+assert_ok linked https://github.com/o/app/pull/12 'diff at https://github.com/o/app/pull/12/files.'
+assert_ok linked https://github.com/O/App/pull/12 'review https://github.com/o/app/pull/12'
 assert_fail linked https://github.com/o/app/pull/12 ''
 OUT="$(printf x | "$RR" linked 'https://github.com/o/app/pull/12$(id)' 2>&1)"
 assert_eq "$?" 2; assert_contains "$OUT" "usage:"
@@ -405,6 +410,16 @@ validate "$BARE" "$CUR"
 assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$BARE" "$CUR")"
 reject "permalink is not a link to message" "$GOOD" "$CUR"
 yq -i '.review_requests.slack_workspace = "acme"' "$FLEET_HOME/config.yaml"
+# Owner and repo compare case-insensitively, against the config and in the reply.
+yq -i '.review_requests.sources[0].repos += ["Acme/Widgets"]' "$FLEET_HOME/config.yaml"
+MIXED="$(row req https://github.com/O/App/pull/18 U0ALICE "$P/p1759312985000100" 1759312985.000100 1759312985.000100)"
+LOWER="$(row req https://github.com/acme/widgets/pull/1 U0ALICE "$P/p1759312986000100" 1759312986.000100 1759312986.000100)"
+validate "$MIXED" "$LOWER" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$MIXED" "$LOWER" "$CUR")"
+pr_json OPEN bob
+OUT="$("$RR" add C0TEAM https://github.com/ACME/Widgets/pull/2 U0ALICE "$P/p1759312800000100" 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/acme+widgets+2/spec.md"
+assert_eq "$(yq --front-matter=extract '.pr' "$FLEET_HOME/reviews/acme+widgets+2/spec.md")" https://github.com/ACME/Widgets/pull/2
 # A source with no configured repos: an empty batch still passes, and any req is not configured.
 OUT="$(printf '%s\n' "$CUR" | "$RR" validate C0NONE "$OLD" "$EPOCH")"
 assert_eq "$?" 0; assert_eq "$OUT" "$CUR"

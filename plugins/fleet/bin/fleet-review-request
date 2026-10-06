@@ -9,8 +9,9 @@ ts_re='^[0-9]{1,12}\.[0-9]{1,9}$'
 need_channel_id() {
   [[ "$1" =~ ^[CGD][A-Z0-9]+$ ]] || { echo "fleet-review-request: source must be a Slack channel ID: $1" >&2; exit 2; }
 }
+# source_repos prints the source's repos, lowercased: GitHub resolves owner and repo case-insensitively.
 source_repos() {
-  src="$1" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[]] | join(" ")'
+  src="$1" fleet_config '[.review_requests.sources[] | select(.slack == strenv(src)) | .repos[] | downcase] | join(" ")'
 }
 # slack_ws prints review_requests.slack_workspace, the permalink host without .slack.com, or nothing.
 slack_ws() {
@@ -105,7 +106,8 @@ case "${1:-}" in
           [ "${#tabs}" -eq 5 ] && [ "${#f[@]}" -eq 6 ] || reject "a req line has six non-empty fields"
           url="${f[1]}" by="${f[2]}" link="${f[3]}" ts="${f[4]}" parent="${f[5]}"
           [[ "$url" =~ $pr_re ]] || reject "not a PR URL"
-          [[ " $repos " == *" ${BASH_REMATCH[1]}/${BASH_REMATCH[2]} "* ]] || reject "the PR's repo is not configured for $src"
+          slug="$(tr '[:upper:]' '[:lower:]' <<<"${BASH_REMATCH[1]}/${BASH_REMATCH[2]}")"
+          [[ " $repos " == *" $slug "* ]] || reject "the PR's repo is not configured for $src"
           [[ "$by" =~ ^U[A-Z0-9]+$ ]] || reject "the requester is not a Slack user ID"
           [[ "$ts" =~ $ts_re && "$parent" =~ $ts_re ]] || reject "ts or parent_ts is not a Slack ts"
           ! ts_gt "$parent" "$ts" || reject "parent_ts is after ts"
@@ -127,11 +129,14 @@ case "${1:-}" in
     printf 'cursor\t%s\n' "$epoch"
     ;;
   linked)
-    # Reads one Slack message's text on stdin and succeeds when it holds <pr-url> as a whole GitHub PR URL, so pull/123
-    # never passes for pull/12. Owner and repo compare case-insensitively, as GitHub resolves them.
+    # Reads one Slack message's text on stdin and succeeds when one of its words is <pr-url>, optionally followed by a
+    # path, query or fragment: pull/123 and pull/12abc never pass for pull/12, nor a PR URL nested in another URL.
+    # Words split on whitespace and on Slack's <url|label> markup; owner and repo compare case-insensitively.
     [ $# -eq 2 ] && [[ "$2" =~ $pr_re ]] || { echo "$usage" >&2; exit 2; }
     want="$(tr '[:upper:]' '[:lower:]' <<<"$2")"
-    found="$(tr -d '\\' | grep -oiE 'https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+' | tr '[:upper:]' '[:lower:]')" || true
+    found="$(tr -d '\\' | tr -s '<>|()"\047\133\135[:space:]' '\n' |
+      grep -xiE 'https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+([/?#][^[:space:]]*)?[.,;:!]*' |
+      sed -E 's#^(https://github\.com/[^/]+/[^/]+/pull/[0-9]+).*#\1#' | tr '[:upper:]' '[:lower:]')" || true
     grep -qxF "$want" <<<"$found"
     ;;
   add)
@@ -152,7 +157,7 @@ case "${1:-}" in
     skip() { echo "skip $url: $*"; exit 0; }
     [ "$by" != "$(fleet_config '.review_requests.slack_user_id')" ] || skip "requested by the user"
     repos="$(source_repos "$src")"
-    [[ " $repos " == *" $slug "* ]] || skip "$slug is not configured for $src"
+    [[ " $repos " == *" $(tr '[:upper:]' '[:lower:]' <<<"$slug") "* ]] || skip "$slug is not configured for $src"
     mkdir -p "$FLEET_HOME/reviews"
     lock_take "$lock" || { echo "fleet-review-request: $lock is held; it goes stale after ${FLEET_LOCK_TTL:-300}s" >&2; exit 1; }
     tmp=""
