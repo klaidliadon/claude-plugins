@@ -55,7 +55,7 @@ req	<pr_url>	<requester>	<permalink>	<ts>	<parent_ts>
 
 - `pr_url`: `https://github.com/<owner>/<repo>/pull/<number>`, with no trailing slash, query or fragment.
 - `requester`: the author's Slack user ID, such as `U0123ABCD`.
-- `permalink`: `https://<workspace>.slack.com/archives/<channel>/p<ts without the dot>` for a parent. For a reply, append `?thread_ts=<parent_ts>&cid=<channel>`. When `workspace` is empty, the permalink is `<channel>:<ts>` instead, such as `C0123ABCD:1759312900.000100`.
+- `permalink`: `https://<workspace>.slack.com/archives/<channel>/p<ts without the dot>` for a parent. For a reply, append `?thread_ts=<parent_ts>&cid=<channel>`. When `workspace` is empty, the permalink is `<channel>:<parent_ts>` instead, such as `C0123ABCD:1759312900.000100`.
 - `ts`: the message's own `Message TS`.
 - `parent_ts`: its thread parent's ts; for a parent, the same as `ts`.
 

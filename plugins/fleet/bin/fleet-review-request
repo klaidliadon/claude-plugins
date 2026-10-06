@@ -2,7 +2,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
-usage="usage: fleet-review-request run | cursor <source> [<ts>] | validate <source> <cursor> <dispatch_epoch> | linked <pr-url> | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
+usage="usage: fleet-review-request run | cursor <source> [<ts>] | validate <source> <cursor> <dispatch_epoch> | add <source> <pr-url> <requested_by> <request_link> <asked_at> <request_channel> <request_ts>"
 cursor="$FLEET_HOME/review-requests.cursor"
 pr_re='^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/([0-9]+)$'
 ts_re='^[0-9]{1,12}\.[0-9]{1,9}$'
@@ -21,14 +21,16 @@ slack_ws() {
     { echo "fleet-review-request: slack_workspace must be a host without .slack.com: $ws" >&2; exit 2; }
   printf '%s' "$ws"
 }
-# link_re <ws> <channel> <ts> [<parent_ts>] matches the request link of message <ts>: its permalink on workspace <ws>,
-# or <channel>:<ts> when <ws> is empty. Given <parent_ts>, a reply's permalink must name that thread and a parent's none.
+# link_re <ws> <channel> <parent_ts> [<ts>] matches a request link: a permalink on workspace <ws>, or
+# <channel>:<parent_ts> when <ws> is empty. Given <ts>, the permalink is message <ts> exactly, naming thread <parent_ts>
+# when it is a reply; without it, the permalink is the parent or any reply in its thread.
 link_re() {
-  local q='(\?thread_ts=[0-9.]+(&cid=[A-Z0-9]+)?)?'
+  local q="\\?thread_ts=${3/./\\.}(&cid=$2)?" p
   [ -n "$1" ] || { printf '^%s:%s$' "$2" "${3/./\\.}"; return; }
-  [ -z "${4:-}" ] || q=""
-  [ -z "${4:-}" ] || [ "$4" = "$3" ] || q="\\?thread_ts=${4/./\\.}(&cid=$2)?"
-  printf '^https://%s\\.slack\\.com/archives/%s/p%s%s$' "${1/./\\.}" "$2" "${3/./}" "$q"
+  p="(p${3/./}|p[0-9]{1,21}$q)"
+  [ -z "${4:-}" ] || p="p${4/./}$q"
+  [ "${4:-}" != "$3" ] || p="p${3/./}"
+  printf '^https://%s\\.slack\\.com/archives/%s/%s$' "${1/./\\.}" "$2" "$p"
 }
 # ts_gt succeeds when Slack ts $1 is later than $2. Either may lack the fraction; callers bound both to 12.9 digits.
 ts_gt() {
@@ -111,7 +113,7 @@ case "${1:-}" in
           [[ "$by" =~ ^U[A-Z0-9]+$ ]] || reject "the requester is not a Slack user ID"
           [[ "$ts" =~ $ts_re && "$parent" =~ $ts_re ]] || reject "ts or parent_ts is not a Slack ts"
           ! ts_gt "$parent" "$ts" || reject "parent_ts is after ts"
-          [[ "$link" =~ $(link_re "$ws" "$src" "$ts" "$parent") ]] || reject "the permalink is not a link to message $ts in $src"
+          [[ "$link" =~ $(link_re "$ws" "$src" "$parent" "$ts") ]] || reject "the permalink is not a link to message $ts in $src"
           ts_gt "$ts" "$old" && ! ts_gt "$ts" "$epoch" || reject "ts $ts is outside ($old, $epoch]"
           accepted+="$line"$'\n'
           ;;
@@ -128,17 +130,6 @@ case "${1:-}" in
     printf '%s' "$accepted" | LC_ALL=C sort -s -t $'\t' -k5,5n
     printf 'cursor\t%s\n' "$epoch"
     ;;
-  linked)
-    # Reads one Slack message's text on stdin and succeeds when one of its words is <pr-url>, optionally followed by a
-    # path, query or fragment: pull/123 and pull/12abc never pass for pull/12, nor a PR URL nested in another URL.
-    # Words split on whitespace and on Slack's <url|label> markup; owner and repo compare case-insensitively.
-    [ $# -eq 2 ] && [[ "$2" =~ $pr_re ]] || { echo "$usage" >&2; exit 2; }
-    want="$(tr '[:upper:]' '[:lower:]' <<<"$2")"
-    found="$(tr -d '\\' | tr -s '<>|()"\047\133\135[:space:]' '\n' |
-      grep -xiE 'https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/pull/[0-9]+([/?#][^[:space:]]*)?[.,;:!]*' |
-      sed -E 's#^(https://github\.com/[^/]+/[^/]+/pull/[0-9]+).*#\1#' | tr '[:upper:]' '[:lower:]')" || true
-    grep -qxF "$want" <<<"$found"
-    ;;
   add)
     [ $# -eq 8 ] || { echo "$usage" >&2; exit 2; }
     src="$2" url="$3" by="$4" link="$5" ch="$7" ts="$8"
@@ -150,7 +141,7 @@ case "${1:-}" in
     [[ "$ch" =~ ^[CGD][A-Z0-9]+$ ]] || bad "request_channel is not a Slack channel ID: $ch"
     [[ "$ts" =~ $ts_re ]] || bad "request_ts is not a Slack ts: $ts"
     ws="$(slack_ws)"
-    [[ "$link" =~ $(link_re "$ws" "$ch" "$ts") ]] || bad "request_link is not a link to $ts in $ch: $link"
+    [[ "$link" =~ $(link_re "$ws" "$ch" "$ts") ]] || bad "request_link is not a link to thread $ts in $ch: $link"
     # GitHub owner and repo names cannot contain "+", so the key is unambiguous.
     task="$(tr '[:upper:]' '[:lower:]' <<<"${slug/\//+}+$n")"
     dir="$FLEET_HOME/reviews/$task" lock="$FLEET_HOME/reviews/.lock-$task"

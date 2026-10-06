@@ -292,7 +292,7 @@ assert_eq "$?" 2; assert_contains "$OUT" "not a PR URL"
 add_bad U0ALICE "$P/p1759312800000100" '#team' 1759312800.000100 "request_channel is not a Slack channel ID: #team"
 add_bad U0ALICE "$P/p1759312800000100" C0TEAM 1759312800 "request_ts is not a Slack ts: 1759312800"
 add_bad U0ALICE "$P/p1759312800000100" C0TEAM '1759312800.000100$(id)' "request_ts is not a Slack ts"
-add_bad U0ALICE https://slack.example/p1 C0TEAM 1759312800.000100 "request_link is not a link to 1759312800.000100 in C0TEAM"
+add_bad U0ALICE https://slack.example/p1 C0TEAM 1759312800.000100 "request_link is not a link to thread 1759312800.000100 in C0TEAM"
 add_bad U0ALICE https://acme.slack.com/archives/C0OTHER/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
 add_bad U0ALICE "$P/p1759312800000200" C0TEAM 1759312800.000100 "request_link is not a link to"
 add_bad U0ALICE "$P/p1759312800000100&x=1" C0TEAM 1759312800.000100 "request_link is not a link to"
@@ -309,9 +309,12 @@ add_bad U0ALICE https://acme.enterprise.slack.com/archives/C0TEAM/p1759312800000
 add_bad U0ALICE https://acme.evil.slack.com/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
 add_bad U0ALICE https://acme.slack.com.evil.example/archives/C0TEAM/p1759312800000100 C0TEAM 1759312800.000100 "request_link is not a link to"
 assert_fail test -e "$FLEET_HOME/reviews/o+web+20"
-# A reply's permalink carries its thread.
+# request_ts is the thread parent, the only ts a reaction ever targets: a reply's permalink must name that thread.
+add_bad U0ALICE "$P/p1759312800000100?thread_ts=1759312600.000100&cid=C0TEAM" C0TEAM 1759312700.000100 "request_link is not a link to thread"
+add_bad U0ALICE "$P/p1759312800000100?thread_ts=1759312700.000100&cid=C0OTHER" C0TEAM 1759312700.000100 "request_link is not a link to thread"
+add_bad U0ALICE "$P/p1759312800000100" C0TEAM 1759312700.000100 "request_link is not a link to thread"
 OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/20 U0ALICE "$P/p1759312800000100?thread_ts=1759312700.000100&cid=C0TEAM" \
-  2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
+  2026-10-01T09:00:00Z C0TEAM 1759312700.000100 2>&1)"
 assert_eq "$?" 0; assert_eq "$OUT" "created $FLEET_HOME/reviews/o+web+20/spec.md"
 # A request by the user's own Slack ID is skipped, whatever the agent reported.
 OUT="$("$RR" add C0TEAM https://github.com/o/web/pull/23 U0ME "$P/p1759312800000100" 2026-10-01T09:00:00Z C0TEAM 1759312800.000100 2>&1)"
@@ -337,22 +340,6 @@ OUT="$(printf 'cursor\t1759313000\n' | "$RR" validate C0TEAM 1759312800 17593130
 assert_eq "$?" 2; assert_eq "$OUT" "fleet-review-request: slack_workspace must be a host without .slack.com: acme.slack.com"
 yq -i '.review_requests.slack_workspace = "acme"' "$FLEET_HOME/config.yaml"
 
-# linked reads one message's text and succeeds only when it holds the whole PR URL: pull/123 is not pull/12.
-linked() { printf '%s' "$2" | "$RR" linked "$1"; }
-assert_ok linked https://github.com/o/app/pull/12 'review <https://github.com/o/app/pull/12|github.com/o/app/pull/12> please'
-assert_ok linked https://github.com/o/app/pull/12 'see <https:\/\/github.com\/O\/App\/pull\/12>'
-assert_ok linked https://github.com/o/app/pull/12 $'first https://github.com/o/app/pull/123\nthen https://github.com/o/app/pull/12/files'
-assert_fail linked https://github.com/o/app/pull/12 'review <https://github.com/o/app/pull/123|github.com/o/app/pull/123>'
-assert_fail linked https://github.com/o/app/pull/12 'review https://github.com/o/app2/pull/12 or https://github.com/xo/app/pull/12'
-assert_fail linked https://github.com/o/app/pull/12 'review o/app pull 12, please'
-assert_fail linked https://github.com/o/app/pull/12 'review https://github.com/o/app/pull/12abc'
-assert_fail linked https://github.com/o/app/pull/12 'see https://x.example/?u=https://github.com/o/app/pull/12'
-assert_ok linked https://github.com/o/app/pull/12 'review (https://github.com/o/app/pull/12), thanks'
-assert_ok linked https://github.com/o/app/pull/12 'diff at https://github.com/o/app/pull/12/files.'
-assert_ok linked https://github.com/O/App/pull/12 'review https://github.com/o/app/pull/12'
-assert_fail linked https://github.com/o/app/pull/12 ''
-OUT="$(printf x | "$RR" linked 'https://github.com/o/app/pull/12$(id)' 2>&1)"
-assert_eq "$?" 2; assert_contains "$OUT" "usage:"
 
 # validate reads the fleet-slack-check reply. Every field is untrusted: the batch passes whole or not at all, and the
 # cursor it prints is always the dispatch epoch.
@@ -408,6 +395,11 @@ reject "permalink is not a link to message" "$GOOD" "$CUR"
 yq -i 'del(.review_requests.slack_workspace)' "$FLEET_HOME/config.yaml"
 validate "$BARE" "$CUR"
 assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$BARE" "$CUR")"
+# Without a workspace, a reply's link is its thread parent: <channel>:<parent_ts>, never its own ts.
+BAREREPLY="$(row req https://github.com/o/web/pull/3 U0BOB C0TEAM:1759300000.000100 1759312950.000200 1759300000.000100)"
+validate "$BAREREPLY" "$CUR"
+assert_eq "$RC" 0; assert_eq "$OUT" "$(printf '%s\n' "$BAREREPLY" "$CUR")"
+reject "permalink is not a link to message" "$(row req https://github.com/o/web/pull/3 U0BOB C0TEAM:1759312950.000200 1759312950.000200 1759300000.000100)" "$CUR"
 reject "permalink is not a link to message" "$GOOD" "$CUR"
 yq -i '.review_requests.slack_workspace = "acme"' "$FLEET_HOME/config.yaml"
 # Owner and repo compare case-insensitively, against the config and in the reply.
