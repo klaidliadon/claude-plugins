@@ -76,6 +76,12 @@
       "description": "One manager session runs spec-gated Orca workers, one per PR, with independent review and confirmed cleanup.",
       "source": "./plugins/fleet",
       "category": "workflow"
+    },
+    {
+      "name": "subagents",
+      "description": "Tiered subagent chain: a cheap scout maps the code, a planner writes the plan, a critic attacks it, sonnet implements the well-specified tasks.",
+      "source": "./plugins/subagents",
+      "category": "workflow"
     }
   ]
 }
