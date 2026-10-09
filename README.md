@@ -15,6 +15,7 @@ Personal Claude Code plugin marketplace.
 - **land-pr**: drive an open GitHub PR until it is actually merged: rebase, green CI, address human and bot reviews, poll, merge. Slash command: `/land-pr`.
 - **ridl-lsp**: RIDL language server for `.ridl` schema files.
 - **service-skeleton**: Go backend service layout and where new code belongs.
+- **subagents**: a tiered subagent chain. A haiku `scout` maps the code, an opus planner writes the plan, an opus `critic` attacks it, sonnet implements the well-specified tasks, and the run stops at a reviewed diff. Slash command: `/subagents:implement`.
 - **writing-for-humans**: the house standard for human-facing prose, on two axes: readability and voice.
 
 ## Install
