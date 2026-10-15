@@ -164,7 +164,7 @@ for p in "${TARGET_PATHS[@]}"; do
 done
 FILES_LIST=$(printf '  - %s\n' "${REL_PATHS[@]}")
 
-REVIEW_PROMPT="Review the following files in the current repository. Read each file, then produce a code review focused on correctness, robustness, conventions, and maintainability. Call out anything surprising or risky.
+REVIEW_PROMPT="Review the following files in the current repository. Read each file, then produce a code review focused on correctness, robustness, conventions, and maintainability. Call out anything surprising or risky. Prioritise defects that span more than one file: a caller/callee mismatch, an invariant one side still assumes, a contract that holds locally but breaks globally.
 
 Files:
 ${FILES_LIST}
@@ -235,7 +235,7 @@ else
   BASE_PROMPT="Focus on correctness, robustness, conventions, and anything surprising or risky."
 fi
 
-REVIEW_PROMPT="Review ${TARGET_TEXT}. Do not modify any files.
+REVIEW_PROMPT="Review ${TARGET_TEXT}. Do not modify any files. Prioritise defects that span more than one file: a caller/callee mismatch, an invariant one side still assumes, a contract that holds locally but breaks globally.
 
 ${BASE_PROMPT}"
 ```
