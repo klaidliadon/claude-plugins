@@ -164,7 +164,7 @@ for p in "${TARGET_PATHS[@]}"; do
 done
 FILES_LIST=$(printf '  - %s\n' "${REL_PATHS[@]}")
 
-REVIEW_PROMPT="Review the following files in the current repository. Read each file, then produce a code review focused on correctness, robustness, conventions, and maintainability. Call out anything surprising or risky.
+REVIEW_PROMPT="Review the following files in the current repository. Read each file, then produce a code review focused on correctness, robustness, conventions, and maintainability. Call out anything surprising or risky. Prioritise defects that span more than one file: a caller/callee mismatch, an invariant one side still assumes, a contract that holds locally but breaks globally.
 
 Files:
 ${FILES_LIST}
@@ -215,34 +215,39 @@ fi
 
 If `BASE_REF` is empty (`origin/HEAD` unset), stop and tell the user to run `git remote set-head origin --auto`. Do not guess a branch name.
 
-If the user pointed at a specific commit ("review commit abc123"), use `--commit <sha>` instead.
+If the user pointed at a specific commit ("review commit abc123"), set `TARGET=commit` and `SHA=<sha>` instead.
 
 ### 3.2 Build the prompt
 
+`codex exec review` rejects a custom prompt together with `--uncommitted`, `--base` or `--commit` (codex-cli 0.157.0: "cannot be used with '[PROMPT]'"). So name the target in the prompt and run plain `codex exec`.
+
 ```bash
+case "$TARGET" in
+  uncommitted) TARGET_TEXT="the uncommitted changes in this repo (staged, unstaged and untracked; see git status and git diff HEAD)" ;;
+  base)        TARGET_TEXT="the changes on this branch since it left ${BASE_REF} (git diff ${BASE_REF}...HEAD)" ;;
+  commit)      TARGET_TEXT="the changes introduced by commit ${SHA} (git show ${SHA})" ;;
+esac
+
 PROMPT_FILE="$REPO_ROOT/.codex/review-prompt.md"
 if [[ -f "$PROMPT_FILE" ]]; then
-  REVIEW_PROMPT=$(cat "$PROMPT_FILE")
+  BASE_PROMPT=$(cat "$PROMPT_FILE")
 else
-  REVIEW_PROMPT="Review the changes. Focus on correctness, robustness, conventions, and anything surprising or risky."
+  BASE_PROMPT="Focus on correctness, robustness, conventions, and anything surprising or risky."
 fi
+
+REVIEW_PROMPT="Review ${TARGET_TEXT}. Do not modify any files. Prioritise defects that span more than one file: a caller/callee mismatch, an invariant one side still assumes, a contract that holds locally but breaks globally.
+
+${BASE_PROMPT}"
 ```
 
 ### 3.3 Run Codex
 
-`-C` is a flag of `codex exec`, not `codex exec review`, so it must come before `review`. Putting it after fails with "unexpected argument '-C' found".
+`-C` is a flag of `codex exec`, so it comes before the prompt.
 
 **Always redirect stdin from `/dev/null`** (see §2.3; prevents `codex exec` blocking forever on "Reading additional input from stdin..." when the call is backgrounded).
 
 ```bash
-# staged or unstaged
-codex exec -C "$REPO_ROOT" review --uncommitted "$REVIEW_PROMPT" </dev/null
-
-# branch diff vs origin default
-codex exec -C "$REPO_ROOT" review --base "$BASE_REF" "$REVIEW_PROMPT" </dev/null
-
-# specific commit
-codex exec -C "$REPO_ROOT" review --commit "$SHA" "$REVIEW_PROMPT" </dev/null
+codex exec -C "$REPO_ROOT" -s read-only "$REVIEW_PROMPT" </dev/null
 ```
 
 Stream output to the user as-is. Do not summarize or filter.
