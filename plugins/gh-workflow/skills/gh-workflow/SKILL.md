@@ -163,10 +163,10 @@ When a change spans multiple PRs with a required merge/deploy order (a stack, or
 
 ## Code-review output
 
-- Findings tiered: **Critical** / **Important** / **Suggestion**, each with file:line and a fix snippet.
+- Findings tiered: **Critical** / **Important** / **Suggestion**, each with file:line, what breaks, and a repro when one exists. Say what is wrong, not how to rewrite it.
 - On PRs:
-  - **Body:** overall take + cross-file/architectural concerns that don't pin to a single line.
-  - **Inline comments:** anything pinpointable to file+line(s). Use ` ```suggestion ` blocks when the fix is concrete code so the author can apply with one click.
+  - **Body:** the reviewed SHA and CI state, what was verified by running it, the main concern (including cross-file or architectural concerns that pin to no single line), and a short "considered and not raised" list with one reason each.
+  - **Inline comments:** anything pinpointable to file+line(s). Use a ` ```suggestion ` block only when the fix is short and obviously right, so the author can apply it with one click. A fix that needs a design choice stays a sentence.
 
 What to look for: for Go diffs, load the `go-style` skill, which carries the review checklist.
 
