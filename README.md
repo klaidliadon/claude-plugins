@@ -4,7 +4,6 @@ Personal Claude Code plugin marketplace.
 
 ## Plugins
 
-- **agent-comms**: two agent sessions (e.g. Claude as author, Codex as reviewer) iterate on an artifact through a shared file until they converge or hit an impasse.
 - **codex-review**: run a Codex code review against a GitHub PR, specific files, or the local working tree.
 - **design-proposal**: structure a decision-ready engineering design proposal.
 - **fleet**: one manager session runs spec-gated Orca workers, one per PR, with independent review and confirmed cleanup. Slash command: `/fleet:checkpoint` moves the manager to a fresh session.
