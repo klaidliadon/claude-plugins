@@ -1,6 +1,7 @@
 ---
 name: land-pr
 description: Use when the user asks to land, merge a GitHub PR, or drive an open GitHub PR to done; when they say /land-pr; or when they want a PR watched until it is actually merged rather than left merge-ready.
+argument-hint: "[PR number or URL]"
 ---
 
 # land-pr

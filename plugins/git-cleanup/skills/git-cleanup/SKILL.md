@@ -1,6 +1,7 @@
 ---
 name: git-cleanup
 description: Audit local branches and worktrees against GitHub PR state, auto-clean unambiguously safe branches, prompt on the rest. Conservative, with `--all` sweep across ~/Workspace and `--dry-run`. Use when user types `/git-cleanup` or asks to audit branches, clean up branches or PRs, prune stale branches, check what branches can be deleted, or tidy a repo.
+argument-hint: "[--all] [--dry-run]"
 ---
 
 # git-cleanup
